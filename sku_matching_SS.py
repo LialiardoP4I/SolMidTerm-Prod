@@ -79,11 +79,59 @@ import gc
 # import psutil  # optional, commented for portability
 import os
 import tempfile
-from multiprocessing import Pool, cpu_count
-from functools import partial
 import warnings
 
 warnings.filterwarnings('ignore')
+
+
+# ============================================================================
+# ECCEZIONI CUSTOM
+# ============================================================================
+
+class CambioValutaError(Exception):
+    """Errore fatale sul caricamento dei tassi di cambio EUR.
+    Indica che Input/Cambio Valuta.xlsx è mancante, vuoto, malformato
+    o non copre tutte le valute presenti in Prezzi.xlsx.
+    """
+    pass
+
+
+def _load_cambio_eur(cambio_path: str = 'Input/Cambio Valuta.xlsx') -> pd.DataFrame:
+    """Carica i tassi di cambio EUR da Cambio Valuta.xlsx.
+
+    Ritorna DataFrame con colonne ['Codice', '1 unità in EUR ≈'].
+    Solleva CambioValutaError in caso di problema (file mancante, vuoto,
+    colonne non riconosciute). Nessun fallback patologico.
+    """
+    if not os.path.exists(cambio_path):
+        raise CambioValutaError(
+            f"File obbligatorio mancante: {cambio_path}\n"
+            f"Necessario per conversione prezzi multi-valuta in EUR."
+        )
+    cambio_temp = pd.read_excel(cambio_path)
+    if cambio_temp.empty:
+        raise CambioValutaError(f"File {cambio_path} è vuoto.")
+
+    code_col = next((c for c in cambio_temp.columns
+                     if any(kw in str(c).lower() for kw in ('codice', 'currency', 'divisa'))), None)
+    rate_col = next((c for c in cambio_temp.columns
+                     if any(kw in str(c).lower() for kw in ('eur', 'tasso', 'rate'))), None)
+    if code_col is None or rate_col is None:
+        raise CambioValutaError(
+            f"File {cambio_path}: colonne attese non trovate.\n"
+            f"Servono colonna 'Codice'/'Divisa'/'Currency' e 'EUR'/'Tasso'/'Rate'.\n"
+            f"Colonne trovate: {list(cambio_temp.columns)}"
+        )
+
+    cambio = (cambio_temp[[code_col, rate_col]]
+              .rename(columns={code_col: 'Codice', rate_col: '1 unità in EUR ≈'})
+              .dropna(subset=['Codice', '1 unità in EUR ≈']))
+    cambio['Codice'] = cambio['Codice'].astype(str).str.strip().str.upper()
+    if cambio.empty:
+        raise CambioValutaError(
+            f"File {cambio_path}: nessuna riga valida (codice+tasso non-null) trovata."
+        )
+    return cambio
 
 
 # ============================================================================
@@ -529,13 +577,14 @@ def get_memory_usage_mb():
     """
     Restituisce la memoria RAM usata dal processo corrente in MB.
     Utile per monitorare l'impatto delle ottimizzazioni sulla memoria.
+    Ritorna 0.0 se psutil non disponibile (evita TypeError su f-string `:.1f`).
     """
     try:
         import psutil
         process = psutil.Process(os.getpid())
         return process.memory_info().rss / 1024 / 1024
     except ImportError:
-        return None
+        return 0.0
 
 
 # ============================================================================
@@ -696,14 +745,12 @@ def _reinit_norm_cache(column_mapping: Dict[str, str]) -> None:
 # CARICAMENTO DATI - LEAD TIME
 # ============================================================================
 
-def load_lead_times(filepath: str = '.\\Input\\quantity e residual.xlsx') -> pd.DataFrame:
+def load_lead_times() -> pd.DataFrame:
     """
-    Carica i lead time dei componenti - VERSIONE V3 (NEW - Residual LT da Gates)
+    Carica i lead time dei componenti - VERSIONE V3 (Residual LT da Gates)
 
-    NEW (V3): Sostituisce il caricamento da "quantity e residual.xlsx" con il processo
-    calcola_residual_lead_time() che usa Gates MTSV4 + Dashboard Supplier + Prezzi.
-
-    Per backward-compatibility, il parametro filepath è mantenuto ma ignorato.
+    V3: deriva tutto da Gates MTSV4 + Dashboard Supplier + Prezzi + BOM.
+    Il file 'quantity e residual.xlsx' è stato eliminato dal progetto.
 
     FLUSSO:
     1. Calcola Residual Lead Time via calcola_residual_lead_time()
@@ -975,44 +1022,6 @@ def sku_matches_combination_numpy(sku_row_values: Dict[str, str],
 # AGGREGAZIONE DOMANDE - SOMMA PER LEAD TIME
 # ============================================================================
 
-def precalculate_month_columns_fast(month_prefixes: List[str],
-                                    n_runs: int,
-                                    columns: List[str]) -> Dict[int, List[int]]:
-    """
-    Pre-calcola gli INDICI delle colonne per ogni mese.
-
-    Le colonne run hanno nomi come "Jan 2026_Run_0", "Jan 2026_Run_1", etc.
-    Invece di cercare le colonne per nome ogni volta, pre-calcoliamo gli indici.
-
-    OTTIMIZZAZIONE: Accesso per indice O(1) invece di ricerca per nome O(n)
-
-    Args:
-        month_prefixes: Lista prefissi mese (es. ["Jan 2026", "Feb 2026"])
-        n_runs: Numero run per mese
-        columns: Lista tutte le colonne del DataFrame
-
-    Returns:
-        Dizionario {indice_mese: [lista indici colonne]}
-    """
-    columns_set = set(columns)
-    columns_list = list(columns)
-
-    # Mappa nome colonna -> indice
-    col_to_idx = {col: idx for idx, col in enumerate(columns_list)}
-
-    month_columns_cache = {}
-
-    for month_idx, month_prefix in enumerate(month_prefixes):
-        indices = []
-        for i in range(n_runs):
-            col_name = f"{month_prefix}_Run_{i}"
-            if col_name in columns_set:
-                indices.append(col_to_idx[col_name])
-        month_columns_cache[month_idx] = indices
-
-    return month_columns_cache
-
-
 def aggregate_monthly_demands_numpy(matching_indices: np.ndarray,
                                     data_matrix: np.ndarray,
                                     month_col_indices: Dict[int, List[int]],
@@ -1174,288 +1183,6 @@ def parse_month_to_sortable(month_str: str) -> tuple:
         return (9999, 99)
 
 
-# ============================================================================
-# FUNZIONE PRINCIPALE MATCHING
-# ============================================================================
-
-def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
-                               lead_times: pd.DataFrame,
-                               simulation_output: pd.DataFrame,
-                               column_mapping: Dict[str, str],
-                               n_runs: int,
-                               n_processes: int = 0,
-                               percentile: int = 99) -> pd.DataFrame:
-    """
-    Esegue il matching SKU-configurazioni con tutte le ottimizzazioni.
-
-    FLUSSO:
-    1. Pre-normalizza le colonne del simulation output
-    2. Prepara matrice numpy per accesso veloce
-    3. Per ogni SKU:
-       - Trova configurazioni matching
-       - Aggrega domanda per lead time
-       - Calcola statistiche
-
-    Args:
-        sku_catalog: DataFrame catalogo SKU
-        lead_times: DataFrame lead time componenti
-        simulation_output: DataFrame dal Monte Carlo
-        column_mapping: Mapping colonne
-        n_runs: Numero run Monte Carlo
-        n_processes: Numero processi paralleli (non usato, per compatibilità)
-
-    Returns:
-        DataFrame con statistiche per ogni SKU
-    """
-    print(f"\n{'='*60}")
-    print(f"MATCHING SKU (ULTRA-OPTIMIZED)")
-    print(f"{'='*60}")
-    print(f"Memoria iniziale: {get_memory_usage_mb():.1f} MB")
-
-    # =========================================================================
-    # STEP 1: Pre-normalizza colonne simulazione
-    # =========================================================================
-    # Converte tutte le stringhe in formato normalizzato per matching
-    normalized_df, norm_arrays_raw = prenormalize_simulation_output_fast(
-        simulation_output, column_mapping
-    )
-    print(f"Memoria dopo pre-norm: {get_memory_usage_mb():.1f} MB")
-
-    # Costruisci mappe categoria -> codice per matching numpy
-    # Esempio: {"rosso": 0, "nero": 1, "bianco": 2}
-    category_maps = {}
-    norm_arrays = {}
-    for col_name in norm_arrays_raw.keys():
-        if col_name in normalized_df.columns:
-            cat_col = normalized_df[col_name]
-            if hasattr(cat_col, 'cat'):
-                # Mappa valore -> codice numerico
-                category_maps[col_name] = {
-                    cat: code for code, cat in enumerate(cat_col.cat.categories)
-                }
-                norm_arrays[col_name] = cat_col.cat.codes.values
-
-    n_rows = len(normalized_df)
-
-    # =========================================================================
-    # STEP 2: Prepara matrice numpy (solo colonne run)
-    # =========================================================================
-    print("\n[SETUP] Preparazione matrice numpy...")
-
-    # Identifica colonne run (contengono "_Run_" nel nome)
-    month_run_columns = [col for col in simulation_output.columns if '_Run_' in col]
-
-    # Estrai prefissi mese unici e ordinali cronologicamente
-    month_prefixes = []
-    seen_prefixes = set()
-    for col in month_run_columns:
-        if "_Run_" in col:
-            prefix = col.split("_Run_")[0]  # Es: "Jan 2026"
-            if prefix not in seen_prefixes:
-                month_prefixes.append(prefix)
-                seen_prefixes.add(prefix)
-    month_prefixes.sort(key=parse_month_to_sortable)
-
-    # Lista ordinata di tutte le colonne run
-    run_columns = []
-    for prefix in month_prefixes:
-        for i in range(n_runs):
-            col_name = f"{prefix}_Run_{i}"
-            if col_name in simulation_output.columns:
-                run_columns.append(col_name)
-
-    print(f"  Colonne run: {len(run_columns)}")
-
-    # OTTIMIZZAZIONE: Estrai matrice numpy int16
-    # int16 usa 2 byte invece di 8 (int64) -> risparmio 75%
-    data_matrix = simulation_output[run_columns].values.astype(np.int16)
-    print(f"  Matrice shape: {data_matrix.shape}")
-    print(f"  Memoria matrice: {data_matrix.nbytes / 1024 / 1024:.1f} MB")
-
-    # Pre-calcola indici colonne per ogni mese
-    run_col_to_idx = {col: idx for idx, col in enumerate(run_columns)}
-    month_col_indices = {}
-    for month_idx, prefix in enumerate(month_prefixes):
-        indices = []
-        for i in range(n_runs):
-            col_name = f"{prefix}_Run_{i}"
-            if col_name in run_col_to_idx:
-                indices.append(run_col_to_idx[col_name])
-        month_col_indices[month_idx] = indices
-
-    # =========================================================================
-    # STEP 3: Prepara dati SKU
-    # =========================================================================
-    print("\n[SETUP] Preparazione dati SKU...")
-
-    # Join catalogo SKU con lead times (LEFT: tutti i componenti BOM, anche senza LT)
-    sku_with_lt = sku_catalog.merge(
-        lead_times[['SKU', 'Lead_Time_Months', 'Lead_Time_Months_Ceil',
-                    'Quantity_Per_Bike', 'Description']],
-        left_on='Numero componenti',
-        right_on='SKU',
-        how='left'
-    )
-
-    # Componenti BOM senza lead time nel file residual: inclusi con LT=0 e flag
-    # (la fonte primaria è la BOM, non il file residual)
-    _no_lt_mask = sku_with_lt['Lead_Time_Months_Ceil'].isna() | (sku_with_lt['Lead_Time_Months_Ceil'] <= 0)
-    _n_no_lt = int(_no_lt_mask.sum())
-    if _n_no_lt > 0:
-        _missing_skus = sku_with_lt.loc[_no_lt_mask, 'Numero componenti'].unique()
-        print(f"  [INFO] {_n_no_lt} righe ({len(_missing_skus)} SKU unici) senza lead time "
-              f"in quantity e residual — inclusi con LT=0, SS=0")
-        sku_with_lt.loc[_no_lt_mask, 'Lead_Time_Months']      = 0.0
-        sku_with_lt.loc[_no_lt_mask, 'Lead_Time_Months_Ceil'] = 0.0
-        sku_with_lt.loc[_no_lt_mask, 'Lead_Time_Missing']     = True
-    sku_with_lt['Lead_Time_Missing'] = sku_with_lt.get('Lead_Time_Missing', False).fillna(False)
-
-    # Quantity_Per_Bike default 1 se mancante
-    sku_with_lt['Quantity_Per_Bike'] = sku_with_lt['Quantity_Per_Bike'].fillna(1.0)
-
-    # Raggruppa per SKU (stesso SKU può avere più righe con caratteristiche diverse)
-    sku_groups = sku_with_lt.groupby('SKU')
-    n_sku_groups = len(sku_groups)
-
-    print(f"  SKU da processare: {n_sku_groups} "
-          f"(di cui {len(_missing_skus) if _n_no_lt > 0 else 0} senza LT)")
-
-    # Pre-estrai dati per ogni SKU (evita accesso ripetuto al DataFrame)
-    sku_ids = []
-    sku_data_list = []
-
-    for sku_id, sku_rows_group in sku_groups:
-        sku_ids.append(sku_id)
-
-        # Estrai valori caratteristiche per ogni riga dello SKU
-        rows_values = []
-        for _, row in sku_rows_group.iterrows():
-            row_values = {}
-            for sku_col in column_mapping.keys():
-                if sku_col in row.index:
-                    row_values[sku_col] = row[sku_col]
-            rows_values.append(row_values)
-
-        sku_data_list.append({
-            'values': rows_values,
-            'lead_time': float(sku_rows_group['Lead_Time_Months_Ceil'].max()),  # Mantieni decimali per interpolazione lineare
-            'quantity': float(sku_rows_group['Quantity_Per_Bike'].mean()),
-            'description': sku_rows_group['Description'].iloc[0] if 'Description' in sku_rows_group.columns else '',
-            'lead_time_raw': sku_rows_group['Lead_Time_Months'].iloc[0] if 'Lead_Time_Months' in sku_rows_group.columns else np.nan,
-            'lead_time_missing': bool(sku_rows_group['Lead_Time_Missing'].any()) if 'Lead_Time_Missing' in sku_rows_group.columns else False
-        })
-
-    # =========================================================================
-    # STEP 4: Processing loop principale
-    # =========================================================================
-    print(f"\n[MATCHING] Elaborazione {n_sku_groups} SKU...")
-    print(f"  Progress: ogni '.' = 50 SKU")
-
-    start_time = time.time()
-    all_results = []
-
-    for sku_idx, (sku_id, sku_data) in enumerate(zip(sku_ids, sku_data_list)):
-        # Progress indicator
-        if sku_idx % 50 == 0:
-            print('.', end='', flush=True)
-        if sku_idx % 500 == 0 and sku_idx > 0:
-            elapsed = time.time() - start_time
-            rate = sku_idx / elapsed
-            remaining = (n_sku_groups - sku_idx) / rate if rate > 0 else 0
-            print(f' [{sku_idx}/{n_sku_groups}] {rate:.1f} SKU/s, ETA: {remaining/60:.1f}min')
-
-        # -----------------------------------------------------------------
-        # MATCHING: trova configurazioni che usano questo SKU
-        # -----------------------------------------------------------------
-        # Uno SKU può avere più righe (es. stesso componente per colori diversi)
-        # Una configurazione matcha se corrisponde ad ALMENO UNA riga
-        combined_mask = np.zeros(n_rows, dtype=bool)
-
-        for row_values in sku_data['values']:
-            row_mask = sku_matches_combination_numpy(
-                row_values, norm_arrays, category_maps,
-                column_mapping, n_rows
-            )
-            combined_mask |= row_mask  # OR: matcha se almeno una riga corrisponde
-
-        # Indici delle configurazioni che usano questo SKU
-        matching_indices = np.where(combined_mask)[0]
-
-        # Nessun match -> salta questo SKU
-        if len(matching_indices) == 0:
-            continue
-
-        # -----------------------------------------------------------------
-        # AGGREGAZIONE: somma domanda per i mesi del lead time (aggregato)
-        # -----------------------------------------------------------------
-        run_demands = aggregate_monthly_demands_numpy(
-            matching_indices, data_matrix, month_col_indices,
-            sku_data['lead_time'], n_runs
-        )
-
-        # -----------------------------------------------------------------
-        # STATISTICHE AGGREGATE: calcola media, percentili, safety stock
-        # -----------------------------------------------------------------
-        stats = calculate_statistics(run_demands, percentile=percentile)
-
-        # -----------------------------------------------------------------
-        # STATISTICHE MENSILI: calcola statistiche mese per mese
-        # -----------------------------------------------------------------
-        # Per ogni mese disponibile, aggreghiamo solo quel mese (lead_time=1)
-        monthly_stats = {}
-        for month_idx, prefix in enumerate(month_prefixes):
-            col_indices_month = month_col_indices.get(month_idx, [])
-            if not col_indices_month:
-                continue
-
-            # Seleziona solo i dati delle configurazioni matching per questo mese
-            month_data = data_matrix[np.ix_(matching_indices, col_indices_month)]
-            # Somma per run (ogni colonna = un run)
-            run_demands_month = month_data.sum(axis=0).astype(np.int32)
-
-            # Calcola statistiche per questo mese
-            monthly_stats[prefix] = calculate_statistics(run_demands_month, percentile=percentile)
-
-        # -----------------------------------------------------------------
-        # RISULTATO: componi record output
-        # -----------------------------------------------------------------
-        ss_key = f'safety_stock_p{percentile}'   # es. 'safety_stock_p99'
-
-        result = {
-            'SKU': sku_id,
-            'Description': sku_data['description'],
-            'Quantity_Per_Bike': sku_data['quantity'],
-            'Lead_Time_Months': sku_data['lead_time_raw'],
-            'Lead_Time_Months_Ceil': sku_data['lead_time'],
-            'Lead_Time_Missing': sku_data.get('lead_time_missing', False),
-            'N_Matching_Combinations': len(matching_indices),
-            'N_SKU_Rows_Original': len(sku_data['values']),
-            'monthly_stats': monthly_stats,   # dict mensile per save_results_monthly()
-        }
-
-        # Aggiungi statistiche aggregate calcolate
-        result.update(stats)
-
-        # Safety stock totale = safety stock unitario × quantità per moto
-        result[f'{ss_key}_total'] = result[ss_key] * sku_data['quantity']
-
-        all_results.append(result)
-
-        # Garbage collection periodico per evitare accumulo memoria
-        if sku_idx % 1000 == 0:
-            gc.collect()
-
-    # Report finale
-    elapsed = time.time() - start_time
-    rate = len(all_results) / elapsed if elapsed > 0 else 0
-
-    print(f"\n\n[OK] Matching completato!")
-    print(f"  Tempo: {elapsed:.1f}s ({elapsed/60:.1f}min)")
-    print(f"  Velocità: {rate:.1f} SKU/s")
-    print(f"  SKU con match: {len(all_results)}")
-    print(f"  Memoria finale: {get_memory_usage_mb():.1f} MB")
-
-    return pd.DataFrame(all_results)
 
 
 # ============================================================================
@@ -1656,19 +1383,15 @@ def save_results_monthly(results_df: pd.DataFrame,
 # FUNZIONE MAIN - ENTRY POINT
 # ============================================================================
 
-def main_sku_ultra_optimized(simulation_output: pd.DataFrame,
-                             percentile: int = 99) -> pd.DataFrame:
-    """Alias per retrocompatibilità -> chiama main_sku_v2."""
-    return main_sku_v2(simulation_output, percentile=percentile)
 
 
 def main_sku_v2(simulation_output: pd.DataFrame,
                 percentile: int = 99,
                 sku_catalog_path: str = '.\\Input\\tutte_righe_univoche_V2.xlsx',
-                lead_times_path:  str = '.\\Input\\quantity e residual.xlsx',
                 prezzi_path:      str = '.\\Input\\Prezzi.xlsx',
                 output_agg:       str = '.\\Output\\sku_safety_stock_leadtime_PER_SKU_V2.xlsx',
-                output_monthly:   str = '.\\Output\\sku_safety_stock_PER_MESE_V2.xlsx') -> pd.DataFrame:
+                output_monthly:   str = '.\\Output\\sku_safety_stock_PER_MESE_V2.xlsx',
+                **_kwargs) -> pd.DataFrame:
     """
     Funzione principale V2: orchestra il processo di SKU matching senza hardcoding.
 
@@ -1685,7 +1408,6 @@ def main_sku_v2(simulation_output: pd.DataFrame,
         simulation_output: DataFrame dal Monte Carlo V2 simulator
         percentile:        Percentile safety stock (default 99). Range: 1-99.
         sku_catalog_path:  Path catalogo SKU V2 (default: tutte_righe_univoche_V2.xlsx)
-        lead_times_path:   Path file lead times
         prezzi_path:       Path file prezzi
         output_agg:        Path output aggregato per SKU
         output_monthly:    Path output mensile
@@ -1724,7 +1446,7 @@ def main_sku_v2(simulation_output: pd.DataFrame,
     # =========================================================================
     # 2. Carica lead times
     # =========================================================================
-    lead_times = load_lead_times(lead_times_path)
+    lead_times = load_lead_times()
 
     print(f"   [OK] {len(simulation_output)} combinazioni simulate")
 
@@ -1873,97 +1595,29 @@ def main_sku_v2(simulation_output: pd.DataFrame,
         prezzi = prezzi.copy()
         prezzi["Prezzo netto"] = _prezzo_num / _unit_num
 
-        # Foglio 2: tassi di cambio verso EUR
-        # Prima cerchiamo nel file Cambio Valuta.xlsx (se esiste e ha dati)
-        cambio = None
-        cambio_path = 'Input/Cambio Valuta.xlsx'
-        
-        try:
-            if os.path.exists(cambio_path):
-                cambio_temp = pd.read_excel(cambio_path)
-                if len(cambio_temp) > 0 and len(cambio_temp.columns) > 0:
-                    print(f"   [INFO] Trovato file Cambio Valuta.xlsx con {len(cambio_temp)} righe")
-                    # Try to find currency code and exchange rate columns
-                    code_col = None
-                    rate_col = None
-                    
-                    for col in cambio_temp.columns:
-                        col_lower = str(col).lower()
-                        if "codice" in col_lower or "currency" in col_lower or "divisa" in col_lower:
-                            code_col = col
-                        if "eur" in col_lower or "tasso" in col_lower or "rate" in col_lower:
-                            rate_col = col
-                    
-                    if code_col and rate_col:
-                        cambio = cambio_temp[[code_col, rate_col]].rename(columns={
-                            code_col: "Codice",
-                            rate_col: "1 unità in EUR ≈"
-                        })
-                        print(f"   [INFO] Tassi di cambio caricati da Cambio Valuta.xlsx")
-                    else:
-                        print(f"   [WARN] File Cambio Valuta.xlsx trovato ma colonne non riconosciute")
-        except Exception as e:
-            print(f"   [WARN] Errore nella lettura di Cambio Valuta.xlsx: {e}")
-        
-        # Se Cambio Valuta.xlsx è vuoto o non esiste, cerchiamo all'interno di PREZZI.xlsx
-        if cambio is None or len(cambio) == 0:
-            sheet_names = pd.ExcelFile(prezzi_path).sheet_names
-            
-            # Try common sheet names for currency exchange
-            for sheet_name in sheet_names:
-                if "cambio" in sheet_name.lower() or "valuta" in sheet_name.lower() or "eur" in sheet_name.lower():
-                    try:
-                        cambio = pd.read_excel(prezzi_path, sheet_name=sheet_name)
-                        # Try to find currency code and exchange rate columns
-                        code_col = None
-                        rate_col = None
-                        
-                        for col in cambio.columns:
-                            col_lower = str(col).lower()
-                            if "codice" in col_lower or "currency" in col_lower or "divisa" in col_lower:
-                                code_col = col
-                            if "eur" in col_lower or "tasso" in col_lower or "rate" in col_lower:
-                                rate_col = col
-                        
-                        if code_col and rate_col:
-                            cambio = cambio[[code_col, rate_col]].rename(columns={
-                                code_col: "Codice",
-                                rate_col: "1 unità in EUR ≈"
-                            })
-                            print(f"   [INFO] Tassi di cambio caricati da foglio {sheet_name} in PREZZI.xlsx")
-                            break
-                    except Exception:
-                        continue
-        
-        # If no currency sheet found, try to extract from Sheet1 if it has exchange rate info
-        if cambio is None or len(cambio) == 0:
-            try:
-                # Look for exchange rate information in Sheet1
-                sheet1_data = pd.read_excel(prezzi_path, sheet_name="Sheet1")
-                # Check if there are multiple currencies and exchange rates
-                if "Divisa" in sheet1_data.columns and "Prezzo netto" in sheet1_data.columns:
-                    # Group by currency and get average exchange rate (approximation)
-                    cambio_data = sheet1_data.groupby("Divisa")["Prezzo netto"].mean().reset_index()
-                    cambio_data["1 unità in EUR ≈"] = 1.0  # Default to 1.0 (EUR)
-                    cambio = cambio_data[["Divisa", "1 unità in EUR ≈"]].rename(columns={"Divisa": "Codice"})
-                    print(f"   [INFO] Tassi di cambio stimati da Sheet1 in PREZZI.xlsx")
-            except Exception:
-                pass
+        # ── Tassi di cambio EUR — SOLO da Input/Cambio Valuta.xlsx ──────────
+        # Nessun fallback patologico. Se cambio mancante/incompleto, errore esplicito
+        # (CambioValutaError propaga fuori dal try outer grazie al re-raise).
+        cambio = _load_cambio_eur()
+        print(f"   [INFO] Tassi di cambio caricati: {len(cambio)} valute "
+              f"({sorted(cambio['Codice'].unique())})")
 
-        # If still no currency data, create a default with EUR=1.0
-        if cambio is None or len(cambio) == 0:
-            print("   [INFO] Nessun tasso di cambio trovato. Usando EUR=1.0 come predefinito")
-            # Create a minimal currency table with just EUR
-            cambio = pd.DataFrame({"Codice": ["EUR"], "1 unità in EUR ≈": [1.0]})
+        # Normalizza codici valuta nei prezzi prima del join
+        prezzi[divisa_col] = prezzi[divisa_col].astype(str).str.strip().str.upper()
 
-        # Join tasso di cambio sul codice valuta
-        prezzi = prezzi.merge(cambio, left_on=divisa_col, right_on="Codice", how="left")
+        # Join sul codice valuta
+        prezzi = prezzi.merge(cambio, left_on=divisa_col, right_on='Codice', how='left')
 
-        # Fallback: se la valuta non è in tabella (es. voce mancante) assume già EUR
-        n_missing = prezzi["1 unità in EUR ≈"].isna().sum()
-        if n_missing > 0:
-            print(f"   [WARN] {n_missing} righe con valuta non trovata -> tasso=1.0 (assumendo EUR)")
-        prezzi["1 unità in EUR ≈"] = prezzi["1 unità in EUR ≈"].fillna(1.0)
+        # Errore esplicito se ci sono valute non mappate (no più fillna 1.0 silenzioso)
+        _miss_mask = prezzi['1 unità in EUR ≈'].isna()
+        if _miss_mask.any():
+            _missing_curr = sorted(prezzi.loc[_miss_mask, divisa_col]
+                                   .dropna().astype(str).unique())
+            raise CambioValutaError(
+                f"Valute presenti in Prezzi.xlsx ma non mappate in Cambio Valuta.xlsx: "
+                f"{_missing_curr}\n"
+                f"Aggiungere queste valute al file Cambio Valuta prima di rilanciare."
+            )
 
         # Converte il prezzo normalizzato in EUR
         prezzi["Prezzo netto EUR"] = prezzi["Prezzo netto"] * prezzi["1 unità in EUR ≈"]
@@ -1978,6 +1632,9 @@ def main_sku_v2(simulation_output: pd.DataFrame,
         ss_key = f'safety_stock_p{percentile}_total'
         results = results.merge(prezzi, left_on="SKU", right_index=True, how="left")
         results["prezzo_safety"] = results["Prezzo netto"] * results[ss_key]
+    except CambioValutaError:
+        # Errore fatale sul cambio valuta: propaga al chiamante per stop pipeline.
+        raise
     except Exception as e:
         print(f"   [WARN] Prezzi non disponibili: {e}")
         import traceback

@@ -1,154 +1,164 @@
-# Python Code Review — Istruzioni Claude Code
+# Revisione Codice Python — Setup Claude Code + Superpowers
 
 ## VINCOLO ASSOLUTO
-Non modificare MAI la logica di business, gli algoritmi, i calcoli,
-i flussi condizionali, le strutture dati e i valori di output.
-Ogni intervento deve produrre un comportamento identico all'originale.
-Se hai dubbi su un blocco, segnalalo senza toccarlo.
+Non modificare MAI:
+- La logica di business e gli algoritmi
+- I calcoli e le formule
+- I flussi condizionali (if/else/match/try/except)
+- Le strutture dati e i valori restituiti
+- Qualsiasi comportamento osservabile dall'esterno del modulo
 
-## Obiettivo
-Revisione approfondita in sola lettura + proposta di ottimizzazione.
-NON applicare modifiche autonomamente: presenta sempre un diff commentato
-e attendi conferma esplicita prima di scrivere qualsiasi file.
+Il comportamento a runtime deve essere identico prima e dopo ogni intervento.
+In caso di dubbio su un blocco: segnalalo con un commento, non toccarlo.
+
+## Regola operativa
+NON applicare modifiche autonomamente.
+Produci prima il report completo, poi attendi conferma esplicita.
+Ogni modifica proposta deve mostrare PRIMA e DOPO affiancati.
 
 ---
 
-## PLUGIN CONSIGLIATI
-Installa questi plugin prima di iniziare (una tantum):
+## INSTALLAZIONE PLUGIN (una tantum)
 
-```powershell
-/plugin install code-review@claude-plugins-official
-/plugin install security-guidance@claude-plugins-official
-/plugin install superpowers@claude-plugins-community
-```
+Lancia Claude Code dalla cartella degli script, poi esegui:
+
+    /plugin install superpowers@claude-plugins-official
+    /plugin install security-guidance@claude-plugins-official
+
+Verifica con:
+
+    /plugins
+
+---
+
+## AVVIO SESSIONE
+
+    cd C:\percorso\tuoi-script-python
+    claude
+
+Claude Code legge questo file automaticamente. Nessun altro setup necessario.
 
 ---
 
 ## PROMPT — REVISIONE SINGOLO FILE
 
-Copia e incolla questo prompt in Claude Code, sostituendo `[nome_file.py]`:
+Incolla questo prompt in Claude Code sostituendo [nome_file.py]:
 
-```
-Esegui una revisione approfondita del file [nome_file.py] seguendo
-esattamente queste fasi nell'ordine indicato. Non modificare nulla
-senza la mia approvazione esplicita.
+------------------------------------------------------------
+Leggi il file [nome_file.py] nella directory corrente.
+Applica il protocollo di revisione definito in CLAUDE.md.
+Non modificare nessun file. Solo analisi e report.
 
-## FASE 1 — COMPRENSIONE
-Descrivi in 5-10 righe cosa fa il codice, qual è la logica centrale
-e quali sono gli input/output principali.
+### FASE 1 — COMPRENSIONE
+Descrivi in massimo 10 righe:
+- Cosa fa il codice
+- Qual è la logica centrale
+- Quali sono input e output principali
+- Dipendenze esterne rilevanti
 
-## FASE 2 — BUG E CORRETTEZZA
-Identifica:
-- Errori certi (eccezioni non gestite, logica errata, off-by-one, ecc.)
-- Rischi potenziali (race condition, divisioni per zero, None non controllati)
-- Comportamenti inattesi in edge case
-Per ogni problema: riga, descrizione, gravità (CRITICO / MEDIO / BASSO).
+### FASE 2 — BUG E CORRETTEZZA
+Analizza riga per riga e identifica:
+- Errori certi: eccezioni non gestite, logica errata, off-by-one,
+  variabili non inizializzate, type mismatch
+- Rischi potenziali: divisioni per zero, None non controllati,
+  race condition, overflow, accessi fuori indice
+- Edge case non gestiti
 
-## FASE 3 — OTTIMIZZAZIONE (senza alterare la logica)
-Individua:
-- Ridondanze e codice morto (variabili inutilizzate, blocchi mai raggiunti)
-- Inefficienze computazionali (loop annidati migliorabili, operazioni ripetute)
-- Import inutilizzati
-- Strutture dati non ottimali per l'uso che ne viene fatto
-Per ogni punto: mostra il PRIMA e il DOPO proposto.
+Per ogni problema:
+| Riga | Descrizione | Gravità (CRITICO / MEDIO / BASSO) |
 
-## FASE 4 — QUALITÀ E MANUTENIBILITÀ
-Verifica:
-- Type hints mancanti o errati
+### FASE 3 — OTTIMIZZAZIONE (senza alterare la logica)
+Identifica esclusivamente interventi che non cambiano il comportamento:
+- Codice morto: variabili mai usate, blocchi irraggiungibili
+- Import non utilizzati
+- Operazioni ridondanti o ripetute inutilmente
+- Loop migliorabili con list comprehension o built-in equivalenti
+- Strutture dati non ottimali per l'uso specifico
+
+Per ogni punto mostra:
+  PRIMA:  [codice attuale]
+  DOPO:   [codice proposto]
+  MOTIVO: [spiegazione in una riga]
+
+### FASE 4 — QUALITÀ E LEGGIBILITÀ
+Segnala (senza correggere autonomamente):
+- Type hints mancanti su funzioni pubbliche
 - Docstring assenti su funzioni/classi pubbliche
-- Nomi di variabili/funzioni non descrittivi
+- Nomi di variabili non descrittivi
 - Violazioni PEP8 sostanziali (non stilistiche minori)
 
-## FASE 5 — VERIFICA FUNZIONALE
-Proponi 3-5 casi di test (input → output atteso) che coprano:
-- Il caso normale
-- Almeno un edge case
-- Almeno un caso di errore atteso
-Non scrivere il codice di test, solo i casi logici.
+### FASE 5 — CASI DI TEST LOGICI
+Proponi 4-5 scenari di test (NON scrivere il codice di test):
+- 1 caso normale atteso
+- 1+ edge case
+- 1 caso di errore/eccezione attesa
+Formato: input → output atteso → motivazione
 
-## FASE 6 — RIEPILOGO
-Tabella finale con:
-| Categoria        | N. problemi | Priorità intervento |
-|------------------|-------------|---------------------|
-| Bug certi        |             |                     |
-| Rischi potenziali|             |                     |
-| Ottimizzazioni   |             |                     |
-| Qualità codice   |             |                     |
+### FASE 6 — RIEPILOGO FINALE
+Tabella riepilogativa:
+| Categoria          | N. problemi trovati | Priorità intervento |
+|--------------------|---------------------|---------------------|
+| Bug certi          |                     |                     |
+| Rischi potenziali  |                     |                     |
+| Ottimizzazioni     |                     |                     |
+| Qualità/leggibilità|                     |                     |
 
-Lista ordinata per priorità degli interventi suggeriti.
+Lista interventi ordinata per priorità decrescente.
 
-## REGOLA FINALE
-Tutto ciò che proponi nella Fase 3 e 4 deve produrre
+REGOLA FINALE: tutto ciò che proponi in Fase 3 e 4 deve produrre
 un comportamento a runtime IDENTICO all'originale.
-Se non sei certo al 100%, esplicita il dubbio invece di procedere.
-```
+Se non sei certo al 100%, scrivi "DUBBIO:" e spiega, senza intervenire.
+------------------------------------------------------------
 
 ---
 
 ## PROMPT — REVISIONE BATCH (più file)
 
-```
-Analizza tutti i file .py nella directory corrente uno per uno,
-seguendo il protocollo di revisione definito in CLAUDE.md.
-Per ogni file, produci il report completo prima di passare al successivo.
-Al termine, aggrega i risultati in una tabella riepilogativa cross-file:
+Incolla questo per analizzare tutti gli script della cartella:
 
-| File | Bug critici | Bug medi | Ottimizzazioni | Priorità complessiva |
-|------|-------------|----------|----------------|----------------------|
+------------------------------------------------------------
+Elenca tutti i file .py nella directory corrente.
+Analizzali uno per uno seguendo il protocollo in CLAUDE.md.
+Per ogni file completa il report prima di passare al successivo.
+Non modificare nessun file durante l'analisi.
 
-Ordina la tabella per priorità decrescente.
-Non modificare nessun file. Solo analisi e report.
-```
+Al termine produci una tabella riepilogativa cross-file:
+| File | Bug critici | Bug medi/bassi | Ottimizzazioni | Priorità |
+|------|-------------|----------------|----------------|----------|
 
----
-
-## FLUSSO DI LAVORO CONSIGLIATO
-
-```powershell
-# 1. Posizionati nella cartella degli script
-cd C:\tuoi-script-python
-
-# 2. Avvia Claude Code
-claude
-
-# 3. Attiva il plugin di review
-/review
-
-# 4. Incolla il prompt operativo (singolo file o batch)
-
-# 5. Valuta il report prodotto
-
-# 6. Approva solo le modifiche che vuoi applicare, es:
-#    "Applica solo le modifiche della Fase 3, punto 2"
-```
+Ordina per priorità decrescente (i file più critici prima).
+------------------------------------------------------------
 
 ---
 
-## HOOK AUTOMATICO (opzionale)
-Per eseguire mypy + flake8 automaticamente dopo ogni modifica approvata,
-aggiungi questo blocco in `~/.claude/settings.json`:
+## APPLICARE LE MODIFICHE (dopo aver letto il report)
 
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      { "command": "python -m mypy {file} --ignore-missing-imports" },
-      { "command": "python -m flake8 {file} --max-line-length=120" }
-    ]
-  }
-}
-```
+Per applicare interventi specifici dopo aver valutato il report:
 
-Assicurati di avere mypy e flake8 installati:
-```powershell
-pip install mypy flake8
-```
+    "Applica solo le modifiche di Fase 3, punti 1 e 3 del file [nome].
+     Mostrami il diff completo prima di scrivere qualsiasi file."
+
+Per bloccare tutto tranne un intervento preciso:
+
+    "Applica solo la rimozione degli import inutilizzati nel file [nome].
+     Non toccare nient'altro."
 
 ---
 
-## NOTE
-- Questo file (CLAUDE.md) viene letto automaticamente da Claude Code
-  all'avvio di ogni sessione nella cartella in cui si trova.
-- Mettilo nella root della cartella dei tuoi script Python.
-- Il vincolo di non modificare la logica è enforced dal prompt,
-  non da meccanismi tecnici: verifica sempre il diff prima di approvare.
+## HOOK AUTOMATICO post-modifica (opzionale)
+
+Dopo ogni modifica approvata, esegui automaticamente mypy e flake8.
+Aggiungi in %USERPROFILE%\.claude\settings.json:
+
+    {
+      "hooks": {
+        "PostToolUse": [
+          { "command": "python -m mypy {file} --ignore-missing-imports" },
+          { "command": "python -m flake8 {file} --max-line-length=120" }
+        ]
+      }
+    }
+
+Installa i tool se non presenti:
+
+    pip install mypy flake8

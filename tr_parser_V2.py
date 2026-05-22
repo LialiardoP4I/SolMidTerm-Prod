@@ -214,6 +214,11 @@ def parse_tr_file(filepath: str) -> tuple:
         first_mod = mod_sheets[0] if mod_sheets else None
 
         print(f"[parse_tr_file] Uso '{first_opt}' come TR globale di riferimento")
+        if first_mod is None:
+            raise ValueError(
+                f"Nessun foglio 'TR_Model_*' trovato in '{filepath}'. "
+                "Impossibile derivare model_mix."
+            )
         model_mix = parse_model_mix(filepath, sheet=first_mod)
         _hdr = _detect_header_row(filepath, first_opt)
         df = pd.read_excel(filepath, sheet_name=first_opt, header=_hdr)

@@ -63,7 +63,6 @@ INPUT_DIR = Path(".") / "Input"
 OUTPUT_DIR = Path(".") / "Input"
 
 # File per quality checks
-RESIDUAL_FILE = INPUT_DIR / "quantity e residual.xlsx"
 PREZZI_FILE = INPUT_DIR / "Prezzi.xlsx"
 STATES_FILE = INPUT_DIR / "States.xlsx"
 
@@ -281,14 +280,7 @@ def run_quality_checks() -> tuple:
     tr_char_options = {}
     states_set = set()
 
-    # Quality check residual/quantity
-    if RESIDUAL_FILE.exists():
-        try:
-            res_df = pd.read_excel(RESIDUAL_FILE)
-            residual_issues = _check_residual_quality(res_df, 'Residual', 'Material')
-            print(f"  [INFO] Residual check: {len(residual_issues)} issues trovati")
-        except Exception as e:
-            print(f"  [WARN] Residual check fallito: {e}")
+    # Quality check residual/quantity: rimosso (file quantity e residual.xlsx eliminato)
 
     # Quality check prezzi
     if PREZZI_FILE.exists():
@@ -362,7 +354,6 @@ def process_combination(combo: dict, tr_char_options: dict = None, filter_untrac
         tr_file=str(tr_path),
         output_file=str(matrix_output_path),
         states_file=str(STATES_FILE) if STATES_FILE.exists() else None,
-        residual_file=str(RESIDUAL_FILE) if RESIDUAL_FILE.exists() else None,
         prezzi_file=str(PREZZI_FILE) if PREZZI_FILE.exists() else None,
         filter_untraced=filter_untraced,
         bom_file=f"BOM_150{nome}.xlsx"

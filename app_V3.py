@@ -24,6 +24,7 @@ import psutil
 import io
 import shutil
 import copy
+import importlib
 from pathlib import Path
 
 # ============================================================================
@@ -194,7 +195,6 @@ INPUT_FILES = {
     "Esclusioni":  INPUT_DIR / "esclusioni.xlsx",
     "Domanda":     INPUT_DIR / "Total_demand.xlsx",
     "Take Rate":   INPUT_DIR / "TR TOTALV21E - Copia.xlsx",    # [V2]
-    "Lead Times":  INPUT_DIR / "quantity e residual.xlsx",
     "Matrix":      INPUT_DIR / "matrix_output_V2.xlsx",        # SUB-TAB D — TOTAL DEMAND
     "Unique Rows": INPUT_DIR / "tutte_righe_univoche_V2.xlsx", # [V2]
     "Prezzi":      INPUT_DIR / "Dati Logistica" / "PREZZI.XLSX",   # opzionale
@@ -747,7 +747,6 @@ if _active_module == "ss":
                                 df_simulation,
                                 percentile=percentile,
                                 sku_catalog_path=str(INPUT_DIR / "tutte_righe_univoche_V2.xlsx"),
-                                lead_times_path=str(INPUT_DIR / "quantity e residual.xlsx"),
                                 prezzi_path=str(INPUT_FILES["Prezzi"]),
                                 output_agg=str(OUTPUT_FILES["Safety Stock"]),
                                 output_monthly=str(OUTPUT_FILES["Safety Stock Mensile"]),
@@ -3519,7 +3518,6 @@ if _active_module == "ss":
                     tr_file=str(INPUT_DIR / "TR TOTALV21E - Copia.xlsx"),
                     exclusions_file=str(INPUT_DIR / "esclusioni.xlsx"),
                     sku_catalog_path=str(INPUT_DIR / "tutte_righe_univoche_V2.xlsx"),
-                    lead_times_path=str(INPUT_DIR / "quantity e residual.xlsx"),
                     prezzi_path=str(INPUT_FILES["Prezzi"]),
                     keep_per_offset_files=bool(_roll_keep_files),
                     max_iterations=int(_roll_max_iter) if _roll_max_iter else None,

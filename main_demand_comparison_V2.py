@@ -50,7 +50,7 @@ from mc_simulator_V2 import (
     verify_demand_conservation,
     build_wide_dataframe,
 )
-from sku_matching_V2 import (
+from sku_matching_SS import (
     NormalizationCache,
     normalize_value_cached,
     load_lead_times,
@@ -334,31 +334,32 @@ def run_simulation_with_tr(
 
     # 2. Calcola mesi necessari
     print("\n[2] Calcolo mesi necessari...")
-    n_months_needed = calculate_n_months_needed(".\\Input\\quantity e residual.xlsx")
+    n_months_needed = calculate_n_months_needed()
     if n_months_needed > len(forecast_values):
         n_months_needed = len(forecast_values)
 
     # 3. Carica TR (con normalizzazione typo + rimozione ALTRO)
+    # Bugfix: usare il path normalizzato ANCHE per load_monthly_tr (prima usava tr_path
+    # originale, lasciando i TR mensili con typo "Bunde" e righe ALTRO non puliti).
     print(f"\n[3] Caricamento TR da: {tr_path}")
     _tmp_tr_path = _normalize_tr_file(tr_path)
+    monthly_tr = None
     try:
         model_mix, characteristics = parse_tr_file(_tmp_tr_path)
+        print(f"  Modelli: {len(model_mix.models)}")
+        print(f"  Caratteristiche: {len(characteristics)}")
+        try:
+            monthly_tr = load_monthly_tr(_tmp_tr_path)
+            print(f"  TR mensili: {len(monthly_tr)} mesi")
+        except (FileNotFoundError, ValueError):
+            print("  Nessun TR mensile trovato → uso TR globali")
+        except Exception as e:
+            print(f"  WARN TR mensili: {e} → uso TR globali")
     finally:
         try:
             os.remove(_tmp_tr_path)
         except Exception:
             pass
-    print(f"  Modelli: {len(model_mix.models)}")
-    print(f"  Caratteristiche: {len(characteristics)}")
-
-    monthly_tr = None
-    try:
-        monthly_tr = load_monthly_tr(tr_path)
-        print(f"  TR mensili: {len(monthly_tr)} mesi")
-    except (FileNotFoundError, ValueError):
-        print("  Nessun TR mensile trovato → uso TR globali")
-    except Exception as e:
-        print(f"  WARN TR mensili: {e} → uso TR globali")
 
     # 4. Esclusioni
     print("\n[4] Caricamento esclusioni...")
@@ -448,7 +449,7 @@ def compute_mean_demands(
     )
 
     # Mappe categoria → codice per matching numpy
-    from sku_matching_V2 import _norm_cache
+    from sku_matching_SS import _norm_cache
     category_maps = {}
     norm_arrays = {}
     for col_name in norm_arrays_raw.keys():
@@ -689,7 +690,7 @@ def main(
     sku_catalog = sku_catalog_raw.drop_duplicates(keep="first")
     print(f"  SKU catalogo V2: {len(sku_catalog)}")
 
-    lead_times = load_lead_times(".\\Input\\quantity e residual.xlsx")
+    lead_times = load_lead_times()
     print(f"  Lead time SKU: {len(lead_times)}")
 
     # [V2] Auto-rileva COLUMN_MAPPING da colonne catalogo e simulazione

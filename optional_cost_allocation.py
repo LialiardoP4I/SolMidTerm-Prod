@@ -34,7 +34,9 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 # ── Percorsi ──────────────────────────────────────────────────────────────────
-BASE   = Path(r"C:\Users\AntonioLiardo-SMOPS\OneDrive - Digital360\Desktop\Ducati\SolMidTerm")
+# Bugfix: BASE risolto relativo al file (script-dir) invece di hardcoded
+# (l'hardcoded puntava a "SolMidTerm" ma il file è in "SolMidTerm - Prod").
+BASE   = Path(__file__).resolve().parent
 INPUT  = BASE / "Input"
 OUTPUT = BASE / "Output"
 
@@ -93,7 +95,12 @@ def build_tr_lookup(parsed: dict):
 def lookup_tr(col: str, val: str, model: str, char_lookup: dict):
     """
     Cerca il TR per (col, val, model). Ritorna None se non trovato.
-    Gestisce piccole discrepanze di nome con matching parziale.
+
+    Bugfix: rimosso match parziale (substring) che produceva risultati
+    non deterministici e potenzialmente sbagliati (es. cercando "Red" si
+    matchava "Red Sport" o "Dark Red" a seconda dell'ordine del dict).
+    Solo match esatto + case-insensitive. Il chiamante (compute_row_tr)
+    skippa l'attributo se ritorniamo None — degradazione graceful.
     """
     if col not in char_lookup:
         return None
@@ -109,11 +116,6 @@ def lookup_tr(col: str, val: str, model: str, char_lookup: dict):
     val_lo = val.lower()
     for k, v in by_model.items():
         if k.lower() == val_lo:
-            return v
-
-    # Match parziale (substring)
-    for k, v in by_model.items():
-        if val_lo in k.lower() or k.lower() in val_lo:
             return v
 
     return None

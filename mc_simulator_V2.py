@@ -607,11 +607,10 @@ def load_monthly_forecast(filepath: str = '.\\Input\\Total_demand.xlsx',
     return forecast_values, month_names
 
 
-def calculate_n_months_needed(residual_filepath: str = '.\\Input\\quantity e residual.xlsx') -> int:
+def calculate_n_months_needed() -> int:
     """
     Calcola quanti mesi simulare basandosi sul lead time massimo dei componenti.
     Legge da Gates MTSV4.xlsx (Dati Logistica) — col. 'Gates (Weeks)'.
-    Il parametro residual_filepath e' mantenuto per backward-compatibility ma ignorato.
     """
     from pathlib import Path
 

@@ -1055,9 +1055,19 @@ def _is_state_specific(condition_text: str, states_set: set) -> bool:
     """
     if not condition_text or not states_set:
         return False
+    # Bugfix: rimuovi i blocchi NOT(...) prima del match, altrimenti
+    # "NOT ($root.ZCOUNTRY eq 'CDN')" verrebbe erroneamente classificato come state-specific.
+    # Strip ricorsivo di NOT( ... ) bilanciato sui paren.
+    _cleaned = condition_text
+    _prev = None
+    while _cleaned != _prev:
+        _prev = _cleaned
+        _cleaned = re.sub(
+            r'NOT\s*\([^()]*\)', '', _cleaned, flags=re.IGNORECASE
+        )
     for match in re.finditer(
         r'\$root\.ZCOUNTRY\s+eq\s+["\']([^"\']+)["\']',
-        condition_text, re.IGNORECASE
+        _cleaned, re.IGNORECASE
     ):
         if match.group(1).strip().upper() in states_set:
             return True
@@ -1767,7 +1777,6 @@ def process_excel_to_matrix_v2(excel_path: str = None,
                                 data_sheet: str = None,
                                 output_file: str = '.\\Input\\matrix_output_V2.xlsx',
                                 states_file: str = '.\\Input\\States.xlsx',
-                                residual_file: str = '.\\Input\\quantity e residual.xlsx',
                                 prezzi_file: str = None,
                                 filter_untraced: bool = True,
                                 df_input: pd.DataFrame = None,
@@ -1792,14 +1801,12 @@ def process_excel_to_matrix_v2(excel_path: str = None,
         data_sheet:    Nome foglio BOM150 (solo se excel_path punta a un xlsm legacy)
         output_file:   Path file output
         states_file:   Path al file States (filtra righe market-specific)
-        residual_file: Path al file quantity e residual
     """
     print(f"\n=== GESTIONE DIPENDENZE V2 — CARICAMENTO ===")
     print(f"BOM:      {excel_path if df_input is None else '(DataFrame in memoria)'}")
     print(f"Mapping:  {mapping_file}")
     print(f"TR:       {tr_file}")
     print(f"Output:   {output_file}")
-    print(f"Residual: {residual_file}")
 
     # -------------------------------------------------------------------------
     # FASE 1: Caricamento dati
@@ -1823,62 +1830,12 @@ def process_excel_to_matrix_v2(excel_path: str = None,
     if start_col not in df.columns:
         raise ValueError(f"Colonna '{start_col}' non trovata nel BOM150")
 
-    # ── Residual: solo quality check, NON filtra le righe BOM ───────────────
-    # La fonte primaria delle SKU da elaborare sono le tre BOM (V21E/V22E/V24T).
-    # Il file quantity e residual.xlsx viene usato esclusivamente per:
-    #   1. Quality check (componenti con residual=0 / null / mancanti)
-    #   2. Arricchimento lead time nel matching SKU (sku_matching_V2.py)
-    # NON esclude più componenti dalla matrice.
-    _RESIDUAL_COL = ('Residual Purchasing Time (months), '
-                     'quanto rimane di mesi rispetto al frozen period')
-    _COMPONENT_COL_BOM = 'Numero componenti'
+    # ── Quality check residual: rimosso (file quantity e residual.xlsx eliminato) ─
+    # In passato veniva fatto un check sui componenti BOM con residual=0/null/mancanti.
+    # Con la rimozione del file, residual_issues e bom_missing_issues sono vuoti.
     residual_issues:    List[Dict] = []
     price_issues:       List[Dict] = []
     bom_missing_issues: List[Dict] = []
-    try:
-        res_df = pd.read_excel(residual_file)
-        if 'Codice componenti' in res_df.columns:
-            res_df = res_df.rename(columns={'Codice componenti': _COMPONENT_COL_BOM})
-        res_df[_RESIDUAL_COL] = pd.to_numeric(res_df[_RESIDUAL_COL], errors='coerce')
-
-        # Quality check residual (solo report, non filtra)
-        residual_issues = _check_residual_quality(res_df, _RESIDUAL_COL, _COMPONENT_COL_BOM)
-
-        # Quality check prezzi (opzionale)
-        if prezzi_file:
-            try:
-                price_issues = _check_price_quality(
-                    res_df, _RESIDUAL_COL, _COMPONENT_COL_BOM, prezzi_file
-                )
-            except Exception as _pe:
-                print(f"  [WARN] Verifica prezzi non eseguita: {_pe}")
-
-        # Info riepilogativa + costruzione lista BOM senza residual
-        bom_codes = set(df[_COMPONENT_COL_BOM].dropna()) if _COMPONENT_COL_BOM in df.columns else set()
-        res_codes = set(res_df[_COMPONENT_COL_BOM].dropna())
-        missing_in_res = bom_codes - res_codes
-        print(f"  [Residual] Componenti BOM: {len(bom_codes)} | "
-              f"Presenti in residual: {len(bom_codes & res_codes)} | "
-              f"Assenti da residual (inclusi con LT=0): {len(missing_in_res)}")
-
-        # Costruisci lista dettagliata per il foglio "BOM Senza Residual"
-        _desc_col_bom = next((c for c in df.columns
-                              if 'testo' in c.lower() or 'descr' in c.lower()
-                              or 'text' in c.lower() or 'benennung' in c.lower()), None)
-        _dep_col_bom  = 'Blocco dati per archivio dipendenze'
-        bom_missing_issues = []
-        if missing_in_res and _COMPONENT_COL_BOM in df.columns:
-            _sub = df[df[_COMPONENT_COL_BOM].isin(missing_in_res)].drop_duplicates(
-                subset=[_COMPONENT_COL_BOM])
-            for _, _row in _sub.iterrows():
-                bom_missing_issues.append({
-                    'Numero componenti': str(_row.get(_COMPONENT_COL_BOM, '')),
-                    'Descrizione':       str(_row[_desc_col_bom]) if _desc_col_bom else '',
-                    'Blocco dipendenze': str(_row.get(_dep_col_bom, '')) if _dep_col_bom in df.columns else '',
-                })
-    except Exception as e:
-        print(f"  [INFO] File residual non caricato ({e}) — tutti i componenti BOM inclusi")
-        bom_missing_issues = []
     # ─────────────────────────────────────────────────────────────────────────
 
     bom_data = df.copy()
@@ -2179,9 +2136,19 @@ def process_excel_to_matrix_v2(excel_path: str = None,
 
         # Estrai tutti i (CHAR, VALUE) con op eq dalla condizione
         # Ignora NOT (...) perché non discriminano positivamente
+        # Bugfix: il vecchio lookbehind (?<!NOT\s)(?<!\() catturava il SECONDO
+        # $root dentro "NOT ($root.A eq 'X' AND $root.B eq 'Y')". Strip esplicito
+        # dei blocchi NOT(...) bilanciati prima del findall.
+        _cleaned_cond = condition_text
+        _prev = None
+        while _cleaned_cond != _prev:
+            _prev = _cleaned_cond
+            _cleaned_cond = re.sub(
+                r'NOT\s*\([^()]*\)', '', _cleaned_cond, flags=re.IGNORECASE
+            )
         eq_pairs = re.findall(
-            r'(?<!NOT\s)(?<!\()\$root\.(\w+)\s+eq\s+["\']([^"\']+)["\']',
-            condition_text, re.IGNORECASE
+            r'\$root\.(\w+)\s+eq\s+["\']([^"\']+)["\']',
+            _cleaned_cond, re.IGNORECASE
         )
 
         if not eq_pairs:

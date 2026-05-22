@@ -49,7 +49,6 @@ INPUT_DIR = Path(".") / "Input"
 MODEL_DIR = INPUT_DIR / "MODEL"
 
 STATES_FILE   = INPUT_DIR / "States.xlsx"
-RESIDUAL_FILE = INPUT_DIR / "quantity e residual.xlsx"
 PREZZI_FILE   = INPUT_DIR / "Prezzi.xlsx"
 TR_FILE       = INPUT_DIR / "TR TOTALV21E - Copia.xlsx"
 
@@ -276,7 +275,6 @@ def _process_combination_sa(combo: dict, filter_untraced: bool = True) -> pd.Dat
         tr_file=str(tr_path),
         output_file=str(matrix_output_path),
         states_file=str(STATES_FILE) if STATES_FILE.exists() else None,
-        residual_file=str(RESIDUAL_FILE) if RESIDUAL_FILE.exists() else None,
         prezzi_file=str(PREZZI_FILE) if PREZZI_FILE.exists() else None,
         filter_untraced=filter_untraced,
     )

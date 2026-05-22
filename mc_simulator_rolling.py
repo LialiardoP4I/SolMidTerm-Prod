@@ -77,7 +77,6 @@ def run_rolling_simulation(
     tr_file: str = ".\\Input\\TR TOTALV21E - Copia.xlsx",
     exclusions_file: str = ".\\Input\\esclusioni.xlsx",
     sku_catalog_path: str = ".\\Input\\tutte_righe_univoche_V2.xlsx",
-    lead_times_path: str = ".\\Input\\quantity e residual.xlsx",
     prezzi_path: str = ".\\Input\\Dati Logistica\\PREZZI.XLSX",
     keep_per_offset_files: bool = False,
     max_iterations: int = None,
@@ -96,7 +95,6 @@ def run_rolling_simulation(
         tr_file:              File Take Rate
         exclusions_file:      File esclusioni incompatibilità
         sku_catalog_path:     tutte_righe_univoche_V2.xlsx
-        lead_times_path:      quantity e residual.xlsx
         prezzi_path:          Prezzi.xlsx
         keep_per_offset_files: Se True mantiene file per singola iterazione
         max_iterations:       Numero massimo iterazioni (default None = tutte).
@@ -269,7 +267,6 @@ def run_rolling_simulation(
             simulation_output=df_sim,
             percentile=percentile,
             sku_catalog_path=sku_catalog_path,
-            lead_times_path=lead_times_path,
             prezzi_path=prezzi_path,
             output_agg=out_agg_i,
             output_monthly=out_monthly_i,

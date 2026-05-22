@@ -56,8 +56,9 @@ def load_forecast(filepath: str = FORECAST_FILE,
 
     # Riga 0: nomi mesi (esclude colonne TOTALE, come il simulatore)
     month_row = df.iloc[0, 0:]
+    # Bugfix: usare startswith per evitare falsi positivi (es. "OTTOBRE" contiene "TOT")
     month_names = [str(m).strip() for m in month_row
-                   if pd.notna(m) and 'TOT' not in str(m).upper()]
+                   if pd.notna(m) and not str(m).strip().upper().startswith('TOT')]
 
     # Riga 1: valori forecast
     forecast_row = df.iloc[1, 0:]

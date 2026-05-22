@@ -47,7 +47,7 @@ from mc_simulator_V2 import (
     verify_demand_conservation,
     build_wide_dataframe,
 )
-from sku_matching_V2 import (
+from sku_matching_SA import (
     prenormalize_simulation_output_fast,
     sku_matches_combination_numpy,
     parse_month_to_sortable,
@@ -372,7 +372,7 @@ def compute_mean_demands_all(
         simulation_output, column_mapping
     )
 
-    from sku_matching_V2 import _norm_cache
+    from sku_matching_SA import _norm_cache
     category_maps = {}
     norm_arrays = {}
     for col_name in norm_arrays_raw.keys():

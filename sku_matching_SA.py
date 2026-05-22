@@ -24,7 +24,187 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple
 import sys
+import os
+import time
+from datetime import datetime
 
+
+# ============================================================================
+# UTILITY CONDIVISE (precedentemente in sku_matching_V2 / sku_matching_SS)
+# ============================================================================
+# Duplicate qui per rendere il modulo SA autonomo. Vedi sku_matching_SS.py
+# per la documentazione completa di queste funzioni.
+# ============================================================================
+
+def build_column_mapping_auto(sku_cols: List[str],
+                               sim_cols: List[str]) -> Dict[str, str]:
+    """Mapping automatico colonne SKU -> simulazione (case-insensitive)."""
+    EXCLUDE = {'id', 'numero componenti', 'numero componenti.1',
+               'numero componenti.2', 'numero componenti.3'}
+    sim_lower_map = {c.lower().strip(): c for c in sim_cols}
+    mapping = {}
+    for sku_col in sku_cols:
+        norm = sku_col.lower().strip()
+        if norm in EXCLUDE:
+            continue
+        sim_match = sim_lower_map.get(norm)
+        if sim_match:
+            mapping[sku_col] = sim_match
+    return mapping
+
+
+def get_memory_usage_mb():
+    """Memoria RAM processo corrente in MB. 0.0 se psutil non disponibile."""
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        return process.memory_info().rss / 1024 / 1024
+    except ImportError:
+        return 0.0
+
+
+class NormalizationCache:
+    """Cache normalizzazione stringhe con lookup O(1)."""
+
+    def __init__(self, prefixes: List[str] = None):
+        self.cache = {}
+        self.prefixes = prefixes if prefixes is not None else []
+
+    def normalize(self, value, column_name: str = None) -> str:
+        cache_key = (value, column_name)
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        if pd.isna(value):
+            result = "no"
+        else:
+            value_str = str(value).strip().lower()
+            if value_str == "nessuno":
+                result = "no"
+            else:
+                for prefix in self.prefixes:
+                    if value_str.startswith(prefix):
+                        value_str = value_str[len(prefix):]
+                        break
+                if column_name:
+                    prefix = column_name.lower() + " - "
+                    if value_str.startswith(prefix):
+                        value_str = value_str[len(prefix):]
+                value_str = value_str.replace(" - ", "-")
+                value_str = value_str.replace(" (", "(").replace("( ", "(")
+                value_str = value_str.replace(") ", ")").replace(" )", ")")
+                value_str = value_str.replace("spoked-black", "spoked black")
+                result = value_str
+        self.cache[cache_key] = result
+        return result
+
+    def preload_column(self, series: pd.Series, column_name: str = None):
+        unique_values = series.dropna().unique()
+        for val in unique_values:
+            self.normalize(val, column_name)
+
+
+_norm_cache = NormalizationCache()
+
+
+def normalize_value_cached(value, column_name: str = None) -> str:
+    """Wrapper pubblico per normalizzazione con cache (istanza globale)."""
+    return _norm_cache.normalize(value, column_name)
+
+
+def _reinit_norm_cache(column_mapping: Dict[str, str]) -> None:
+    """Re-inizializza _norm_cache con i prefissi derivati dal column_mapping."""
+    global _norm_cache
+    prefixes = ['bundle - '] + [v.lower().strip() + ' - '
+                                 for v in column_mapping.values()]
+    _norm_cache = NormalizationCache(prefixes=prefixes)
+    print(f"[NormCache SA] Re-inizializzata con {len(prefixes)} prefissi dinamici")
+
+
+def prenormalize_simulation_output_fast(
+    simulation_output: pd.DataFrame,
+    column_mapping: Dict[str, str]
+) -> Tuple[pd.DataFrame, Dict[str, np.ndarray]]:
+    """Pre-normalizza colonne simulazione, ritorna (df, dict array numpy)."""
+    print(f"\n[PRE-NORM] Inizio pre-normalizzazione veloce...")
+    sys.stdout.flush()
+    start = time.time()
+    normalized_df = simulation_output
+    norm_arrays = {}
+    for i, (sku_col, combo_col) in enumerate(column_mapping.items(), 1):
+        if combo_col in normalized_df.columns:
+            _norm_cache.preload_column(normalized_df[combo_col], combo_col)
+            norm_col_name = f"{combo_col}_NORM"
+            unique_vals = normalized_df[combo_col].dropna().unique()
+            norm_map = {v: normalize_value_cached(v, combo_col) for v in unique_vals}
+            norm_map[np.nan] = "no"
+            normalized_df[norm_col_name] = normalized_df[combo_col].map(
+                lambda x: norm_map.get(x, "no") if pd.notna(x) else "no"
+            )
+            normalized_df[norm_col_name] = normalized_df[norm_col_name].astype('category')
+            norm_arrays[norm_col_name] = normalized_df[norm_col_name].cat.codes.values
+    elapsed = time.time() - start
+    print(f"[PRE-NORM] Completato in {elapsed:.2f}s")
+    sys.stdout.flush()
+    return normalized_df, norm_arrays
+
+
+def sku_matches_combination_numpy(
+    sku_row_values: Dict[str, str],
+    norm_arrays: Dict[str, np.ndarray],
+    category_maps: Dict[str, Dict[str, int]],
+    column_mapping: Dict[str, str],
+    n_rows: int,
+) -> np.ndarray:
+    """Maschera bool: True per configurazioni che matchano lo SKU (numpy vettoriale)."""
+    final_mask = np.ones(n_rows, dtype=bool)
+    for sku_col, combo_col in column_mapping.items():
+        if sku_col not in sku_row_values:
+            continue
+        norm_col = f"{combo_col}_NORM"
+        if norm_col not in norm_arrays:
+            continue
+        sku_value = normalize_value_cached(sku_row_values[sku_col], sku_col)
+        if sku_value == "no":
+            continue
+        cat_map = category_maps.get(norm_col, {})
+        if sku_value == "yes":
+            no_code = cat_map.get("no", None)
+            not_code = cat_map.get("not", None)
+            if no_code is not None:
+                final_mask &= norm_arrays[norm_col] != no_code
+            if not_code is not None:
+                final_mask &= norm_arrays[norm_col] != not_code
+            if not final_mask.any():
+                return final_mask
+            continue
+        if sku_value not in cat_map:
+            final_mask[:] = False
+            return final_mask
+        target_code = cat_map[sku_value]
+        char_mask = norm_arrays[norm_col] == target_code
+        final_mask &= char_mask
+        if not final_mask.any():
+            return final_mask
+    return final_mask
+
+
+def parse_month_to_sortable(month_str: str) -> tuple:
+    """Converte 'Jan 2026' in (2026, 1) per ordinamento cronologico."""
+    try:
+        parts = month_str.strip().split()
+        if len(parts) == 2:
+            month_name, year = parts
+            month_num = datetime.strptime(month_name, '%b').month
+            return (int(year), month_num)
+        else:
+            return (9999, 99)
+    except:
+        return (9999, 99)
+
+
+# ============================================================================
+# FUNZIONI SPECIFICHE STOCK ALIGNMENT
+# ============================================================================
 
 def match_sku_with_supermodel(
     sku_catalog: pd.DataFrame,
@@ -141,7 +321,8 @@ def match_sku_with_supermodel(
             model_vals = simulation_output["Model"].astype(str).str.strip().str.lower()
             supermodel_lower = supermodel.lower()
             # Match esatto o contenimento
-            match_mask &= (model_vals == supermodel_lower) | (model_vals.str.contains(supermodel_lower, na=False))
+            # Bugfix: regex=False evita interpretazione di metachar regex (es. '(', '+') in supermodel
+            match_mask &= (model_vals == supermodel_lower) | (model_vals.str.contains(supermodel_lower, na=False, regex=False))
 
         # Aggrega domanda per questo (SKU, Supermodel)
         # Logica corretta:
@@ -231,13 +412,14 @@ def main_sku_sa(
     print(f"  Column mapping: {len(column_mapping)} colonne")
 
     # Matching con supermodel
-    n_runs = len([c for c in simulation_output.columns if "_Run_0" in c])
+    # Conta mesi presenti (una colonna `*_Run_0` per ciascun mese simulato)
+    n_months_detected = len([c for c in simulation_output.columns if "_Run_0" in c])
     df_matched = match_sku_with_supermodel(
         sku_catalog, simulation_output, column_mapping, n_months=n_months
     )
 
     # Aggrega
-    df_results = aggregate_demand_by_supermodel(df_matched, n_runs, n_months)
+    df_results = aggregate_demand_by_supermodel(df_matched, n_months_detected, n_months)
 
     print(f"\n  Risultati finali: {len(df_results)} (SKU, Supermodel)")
 

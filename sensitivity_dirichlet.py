@@ -389,20 +389,35 @@ def build_sheet_guida(wb: Workbook):
         cell.alignment = ALIGN_CENTER
         cell.border    = thin_border()
 
-    livelli_data = [
-        ("ALTA",  100_000, "~100.000",  "0.09%", "×1.0",
-         "Storico >3 anni, dati consolidati",
-         "Ducati Red su MSV4: TR stabile da anni"),
-        ("MEDIA",  10_000, "~10.000",   "0.30%", "×3.2",
-         "Forecast commerciale, 1-2 stagioni",
-         "Colori standard nuova generazione"),
-        ("BASSA",   1_000, "~1.000",    "0.95%", "×10.0",
-         "Pochi mesi di dati, mercato volatile",
-         "Optional su modello appena lanciato"),
-        ("NULLA",     100, "~100",      "3.0%",  "×31.6",
-         "Stima/ipotesi senza dati veri",
-         "Colori speciali, serie limitate"),
-    ]
+    # Bugfix: deriva valori dinamicamente da MULTIPLIERS per evitare incoerenza
+    # con il resto del report (mappa M, σ, amplificazione).
+    _ref_tr = 0.10  # TR di riferimento per la colonna σ
+    _M_alta = MULTIPLIERS['ALTA']
+    _sigma_alta_ref = (_ref_tr * (1 - _ref_tr) / _M_alta) ** 0.5
+    _descrizioni = {
+        'ALTA':  ("Storico >3 anni, dati consolidati",
+                  "Ducati Red su MSV4: TR stabile da anni"),
+        'MEDIA': ("Forecast commerciale, 1-2 stagioni",
+                  "Colori standard nuova generazione"),
+        'BASSA': ("Pochi mesi di dati, mercato volatile",
+                  "Optional su modello appena lanciato"),
+        'NULLA': ("Stima/ipotesi senza dati veri",
+                  "Colori speciali, serie limitate"),
+    }
+    # Ordina: ALTA, MEDIA, BASSA, NULLA (decrescente per M)
+    _ordered_levels = sorted(MULTIPLIERS.keys(), key=lambda k: -MULTIPLIERS[k])
+    livelli_data = []
+    for _lv in _ordered_levels:
+        _M = MULTIPLIERS[_lv]
+        _sigma = (_ref_tr * (1 - _ref_tr) / _M) ** 0.5
+        _ampl = _sigma / _sigma_alta_ref if _sigma_alta_ref > 0 else 0.0
+        _cond, _es = _descrizioni.get(_lv, ("", ""))
+        livelli_data.append((
+            _lv, _M, f"~{_M:,}".replace(",", "."),
+            f"{_sigma*100:.2f}%",
+            f"×{_ampl:.1f}",
+            _cond, _es,
+        ))
     lv_colors = {'ALTA': COL_VERDE, 'MEDIA': COL_GIALLO,
                  'BASSA': COL_ARANCIO, 'NULLA': COL_ROSSO}
 
