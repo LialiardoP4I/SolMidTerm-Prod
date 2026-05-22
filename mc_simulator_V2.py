@@ -84,77 +84,7 @@ class SimulationConfig:
 # Viene usata per modellare l'incertezza sui Take Rate delle opzioni.
 # ============================================================================
 
-def sample_dirichlet_batch(alpha: np.ndarray, n_samples: int) -> np.ndarray:
-    """
-    Campiona N vettori di probabilità dalla distribuzione Dirichlet.
 
-    La Dirichlet è parametrizzata da alpha: valori più alti = meno varianza.
-    Esempio: alpha=[10,10] produce ~50%/50%, alpha=[1,1] produce valori più estremi.
-
-    OTTIMIZZAZIONE: Genera tutti i sample in un'unica chiamata numpy invece
-    di chiamare np.random.dirichlet N volte (molto più veloce).
-
-    Args:
-        alpha: Parametri Dirichlet (uno per ogni opzione)
-        n_samples: Quanti vettori di probabilità generare
-
-    Returns:
-        Array shape (n_samples, len(alpha)) con probabilità che sommano a 1 per riga
-    """
-    # Gestisce alpha <= 0 sostituendo con valore minimo 0.001
-    safe_alpha = np.where(alpha <= 0, 0.001, alpha)
-
-    # Se tutti gli alpha sono ~0, usa distribuzione uniforme
-    if np.all(safe_alpha <= 0.001):
-        safe_alpha = np.ones_like(alpha)
-
-    # Batch sampling - genera tutti i sample insieme
-    return np.random.dirichlet(safe_alpha, size=n_samples)
-
-
-def sample_dirichlet_filtered_batch(alpha: np.ndarray, values: List[str],
-                                    tr: np.ndarray, n_samples: int) -> Tuple[np.ndarray, List[str], np.ndarray]:
-    """
-    Campiona dalla Dirichlet ESCLUDENDO le opzioni con Take Rate = 0.
-
-    Le opzioni con TR=0 sono impossibili per quel modello, quindi non devono
-    essere considerate nel campionamento. Questa funzione:
-    1. Filtra via le opzioni con TR=0
-    2. Campiona solo dalle opzioni valide
-    3. Restituisce sia le probabilità che l'elenco delle opzioni valide
-
-    Args:
-        alpha: Parametri Dirichlet originali
-        values: Nomi delle opzioni (es. ['Rosso', 'Nero', 'Bianco'])
-        tr: Take Rate per ogni opzione (0 = opzione non disponibile)
-        n_samples: Quanti vettori di probabilità generare
-
-    Returns:
-        Tupla (probabilità_batch, valori_filtrati, indici_validi)
-    """
-    # Maschera: True solo per opzioni con TR > 0
-    valid_mask = tr > 0
-
-    # Caso estremo: tutte le opzioni hanno TR=0 -> distribuzione uniforme
-    if not np.any(valid_mask):
-        n_values = len(values)
-        probs = np.ones((n_samples, n_values)) / n_values
-        return probs, values, np.arange(n_values)
-
-    # Filtra alpha e valori per tenere solo quelli validi
-    filtered_alpha = alpha[valid_mask]
-    filtered_values = [v for v, m in zip(values, valid_mask) if m]
-    valid_indices = np.where(valid_mask)[0]
-
-    # Campiona dalla Dirichlet filtrata
-    if filtered_alpha.sum() <= 0:
-        n_valid = len(filtered_values)
-        probs = np.ones((n_samples, n_valid)) / n_valid
-    else:
-        safe_alpha = np.where(filtered_alpha <= 0, 0.001, filtered_alpha)
-        probs = np.random.dirichlet(safe_alpha, size=n_samples)
-
-    return probs, filtered_values, valid_indices
 
 
 # ============================================================================

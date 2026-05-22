@@ -36,16 +36,6 @@ def _load_affidabilita_config(path: str = _AFFIDABILITA_CONFIG_PATH) -> Dict[str
 _AFFIDABILITA_MAP: Dict[str, float] = _load_affidabilita_config()
 
 
-def _get_multiplier(affidabilita_value) -> float:
-    """
-    Restituisce il moltiplicatore Dirichlet per un valore di Affidabilità TR.
-    Normalizza in uppercase e usa MEDIA come fallback se non trovato.
-    """
-    if pd.isna(affidabilita_value):
-        return _AFFIDABILITA_MAP.get('MEDIA', 100.0)
-    key = str(affidabilita_value).strip().upper()
-    return _AFFIDABILITA_MAP.get(key, _AFFIDABILITA_MAP.get('MEDIA', 100.0))
-
 @dataclass
 class ModelMix:
     """Model selection distribution (Level 0 Dirichlet)"""
@@ -769,65 +759,6 @@ def get_tr_for_month(
 
     return monthly_tr[fallback]
 
-
-def parser():
-    model_mix, characteristics = parse_tr_file('.\\Input\\TR TOTALV21E - Copia.xlsx')
-    
-    print("=== MODEL MIX ===")
-    for model, tr, alpha in zip(model_mix.models, model_mix.take_rates, model_mix.alphas):
-        print(f"{model}: TR={tr:.2f}, alpha={alpha}")
-    print(f"Total TR: {model_mix.take_rates.sum():.3f}")
-    
-    print(f"\n=== CHARACTERISTICS (Total: {len(characteristics)}) ===")
-    for name, char in characteristics.items():
-        print(f"\n{name}: {len(char.values)} values")
-        print(f"  Values: {char.values[:3]}{'...' if len(char.values) > 3 else ''}")
-        for model_name, tr_arr in char.tr.items():
-            alpha_arr = char.alpha.get(model_name, np.array([]))
-            print(f"  [{model_name}]: TR_sum={tr_arr.sum():.3f}, alpha={alpha_arr[:3]}")
-
-    # Save to CSV for verification
-    import csv
-    import json
-
-    # Save summary CSV
-    with open('.\\Output\\parsed_data_summary.csv', 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['Type', 'Name', 'N_Values', 'Model', 'TR_Sum', 'Alpha_Sum'])
-
-        # Model Mix
-        writer.writerow(['ModelMix', 'ALL', len(model_mix.models), 'MIX',
-                        model_mix.take_rates.sum(), model_mix.alphas.sum()])
-
-        # Characteristics — itera dinamicamente su tutti i modelli disponibili
-        for name, char in characteristics.items():
-            for model_name, tr_arr in char.tr.items():
-                alpha_arr = char.alpha.get(model_name, np.array([0]))
-                writer.writerow(['Characteristic', name, len(char.values), model_name,
-                               tr_arr.sum(), alpha_arr.sum()])
-
-    # Save complete structure as JSON
-    full_data = {
-        'model_mix': {
-            'models': model_mix.models,
-            'take_rates': model_mix.take_rates.tolist(),
-            'alphas': model_mix.alphas.tolist()
-        },
-        'characteristics': {}
-    }
-
-    for name, char in characteristics.items():
-        full_data['characteristics'][name] = {
-            'values': char.values,
-            'tr':    {m: v.tolist() for m, v in char.tr.items()},
-            'alpha': {m: v.tolist() for m, v in char.alpha.items()},
-        }
-
-    with open('.\\Output\\parsed_data_complete.json', 'w') as f:
-        json.dump(full_data, f, indent=2)
-
-    print("\n[OK] Saved summary to .\\Output\\parsed_data_summary.csv")
-    print("[OK] Saved complete data to .\\Output\\parsed_data_complete.json")
 
 
 

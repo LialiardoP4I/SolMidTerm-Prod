@@ -277,26 +277,6 @@ def _build_column_index(col_structure: List[Tuple]) -> Dict[Tuple, List[int]]:
     return index
 
 
-def _is_bundle_col(calc_name: str, calculated_cols: List[Tuple]) -> bool:
-    """
-    Verifica se una colonna calcolata è un bundle (chiave_ricerca = None).
-
-    Le colonne caratteristiche (Fairing colors, Rider Seat, ...) hanno
-    una chiave di ricerca sulla DESC (es: 'FAIRING COLOR').
-    Le colonne bundle (Radar Pack, Tech Pack, ...) hanno chiave None.
-
-    Args:
-        calc_name: Nome della colonna calcolata
-        calculated_cols: Lista completa delle colonne calcolate
-
-    Returns:
-        True se è un bundle, False se è una caratteristica
-    """
-    for col_tuple in calculated_cols:
-        if col_tuple[2] == calc_name:
-            return col_tuple[3] is None
-    return False
-
 
 def _get_not_bundle_name(bundle_name: str) -> str:
     """
@@ -614,48 +594,6 @@ def load_mapping_from_file(mapping_file: str = '.\\Input\\Mappatura.xlsx') -> pd
     return result_df
 
 
-def load_mapping_from_schema_df(schema_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Variante di load_mapping_from_file che accetta direttamente il DataFrame
-    Schema (già in memoria) invece di leggerlo da file.
-    Utile quando la mappatura unificata viene costruita a runtime in
-    process_all_bom_combinations.py senza passare per un file intermedio.
-    """
-    return _load_mapping_from_df(schema_df)
-
-
-def _load_mapping_from_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Elabora un DataFrame Schema e restituisce il mapping normalizzato."""
-    mapping_rows = []
-    for row in df.itertuples(index=False):
-        bundle = str(getattr(row, 'Bundle', '')).strip() if hasattr(row, 'Bundle') else ''
-        char_code = str(row[1]).strip() if len(row) > 1 else ''
-        char_desc = str(row[2]).strip() if len(row) > 2 else ''
-        if not char_code or pd.isna(row[1]):
-            continue
-        col_idx = 3
-        row_list = list(row)
-        while col_idx < len(row_list):
-            opz_col_val  = row_list[col_idx]     if col_idx     < len(row_list) else None
-            desc_col_val = row_list[col_idx + 1] if col_idx + 1 < len(row_list) else None
-            value_code = str(opz_col_val).strip()  if opz_col_val  is not None else ''
-            readable   = str(desc_col_val).strip() if desc_col_val is not None else ''
-            if value_code and value_code.lower() not in ['', 'nan', 'none']:
-                if value_code.upper() in ['TRUE', 'FALSE', 'NE TRUE']:
-                    final_readable = value_code if not readable or readable.upper() in ['TRUE', 'FALSE', 'NE TRUE', 'NAN'] else readable
-                else:
-                    final_readable = readable if readable and readable.lower() not in ['', 'nan'] else value_code
-                mapping_rows.append({
-                    'Bundle':     bundle if bundle and bundle.lower() not in ['nan', 'no'] else '',
-                    'Descrizione': char_desc,
-                    'CHAR':       char_code,
-                    'VALUE':      value_code,
-                    'Readable':   final_readable,
-                })
-            col_idx += 2
-    result_df = pd.DataFrame(mapping_rows)
-    print(f"[OK] Mappatura V2 (da DataFrame): {len(result_df)} entries da {len(df)} righe Schema")
-    return result_df
 
 
 # ============================================================================

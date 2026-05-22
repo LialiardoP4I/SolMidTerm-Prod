@@ -335,10 +335,6 @@ def load_safety_stock_monthly(path: str) -> pd.DataFrame:
     return pd.read_excel(path)
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_demand(path: str) -> pd.DataFrame:
-    return pd.read_excel(path, header=None)
-
-@st.cache_data(ttl=300, show_spinner=False)
 def load_tr_sheets_list(path: str):
     import openpyxl
     wb = openpyxl.load_workbook(path, read_only=True)
