@@ -66,7 +66,7 @@ def _get_memory_mb() -> float:
     return process.memory_info().rss / 1024 / 1024
 
 
-def _load_prezzi(filepath: str = ".\\Input\\Prezzi.xlsx") -> pd.DataFrame:
+def _load_prezzi(filepath: str = ".\\Input\\Dati Logistica\\PREZZI.XLSX") -> pd.DataFrame:
     """
     Carica e normalizza prezzi unitari in EUR indicizzati per Materiale.
 
@@ -799,7 +799,7 @@ def main(
         df_merged = df_merged.merge(supermodel_multi, on="SKU", how="left")
 
     # Prezzi
-    prezzi = _load_prezzi(".\\Input\\Prezzi.xlsx")
+    prezzi = _load_prezzi(".\\Input\\Dati Logistica\\PREZZI.XLSX")
 
     # DIAGNOSTICA PREZZI
     print(f"\n[DIAG] Caricamento prezzi:")
