@@ -73,7 +73,7 @@ def get_memory_mb() -> float:
     return process.memory_info().rss / 1024 / 1024
 
 
-def load_prezzi(filepath: str = ".\\Input\\Prezzi.xlsx") -> pd.DataFrame:
+def load_prezzi(filepath: str = ".\\Input\\Dati Logistica\\PREZZI.XLSX") -> pd.DataFrame:
     """
     Carica e normalizza la tabella prezzi da Prezzi.xlsx.
 
@@ -781,7 +781,7 @@ def main(
         df_merged["mean_demand_forecast"] - df_merged["mean_demand_actual"]
     ).round(2)
 
-    prezzi = load_prezzi(".\\Input\\Prezzi.xlsx")
+    prezzi = load_prezzi(".\\Input\\Dati Logistica\\PREZZI.XLSX")
 
     df_merged = df_merged.merge(
         prezzi,
