@@ -185,7 +185,8 @@ def build_unified_mapping(source_files=None, output_path=None) -> pd.DataFrame:
     result_rows = []
     seen_bkeys = {}  # bkey -> index nella result_rows
 
-    for _, row in all_df.iterrows():
+    # Perf: to_dict('records') ~10x più veloce di iterrows()
+    for row in all_df.to_dict('records'):
         bkey = row['_bkey']
         row_opz  = [row[c] for c in opz_cols]
         row_desc = [row[c] for c in desc_cols]

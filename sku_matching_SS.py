@@ -1305,9 +1305,9 @@ def save_results_monthly(results_df: pd.DataFrame,
     # raccogliendo tutti i mesi presenti in qualsiasi SKU.
     # Serve per garantire che ogni riga abbia le stesse colonne.
     # ------------------------------------------------------------------
+    # Perf: itera solo la colonna 'monthly_stats' invece di iterrows()
     all_months_set = set()
-    for _, row in results_df.iterrows():
-        ms = row.get('monthly_stats', {})
+    for ms in results_df['monthly_stats']:
         if ms:
             all_months_set.update(ms.keys())
 
@@ -1315,7 +1315,8 @@ def save_results_monthly(results_df: pd.DataFrame,
 
     monthly_rows = []
 
-    for _, row in results_df.iterrows():
+    # Perf: to_dict('records') ~10x più veloce di iterrows() per molti SKU
+    for row in results_df.to_dict('records'):
         monthly_stats = row['monthly_stats']  # dict: {mese: {mean, safety_p99, ...}}
 
         if not monthly_stats:

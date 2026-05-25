@@ -191,8 +191,9 @@ def _enrich_bom_full(ver: str, in_dir) -> pd.DataFrame:
     # BOM125: aggrega colonna dipendenze per componente
     bom125 = pd.read_excel(b125_file, header=0)
     bom125_dep: Dict[str, str] = {}
-    for _, row in bom125.iterrows():
-        comp    = _bom_to_str(row["Componente critico"])
+    # Perf: to_dict('records') ~10x più veloce di iterrows()
+    for row in bom125.to_dict('records'):
+        comp    = _bom_to_str(row.get("Componente critico", ""))
         dep_raw = _bom_to_str(row.get(_DEP_COL_ENRICH, ""))
         dep_val = re.sub(r'\s*\|\s*', ' OR ', dep_raw).strip() if dep_raw else ""
         if not comp:

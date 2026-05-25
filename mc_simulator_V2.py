@@ -157,14 +157,11 @@ def parse_exclusions(filepath: str = '.\\Input\\esclusioni.xlsx') -> Dict[str, L
         df = pd.read_excel(filepath, sheet_name='Foglio1')
         exclusions = {}
 
-        for idx, row in df.iterrows():
-            option = str(row.iloc[0]).strip()
-            incompatible_text = str(row.iloc[1])
-
-            # Estrae le opzioni incompatibili (tra virgolette nel testo)
-            pattern = r'"([^"]+)"'
-            incompatible_options = re.findall(pattern, incompatible_text)
-
+        # Perf: zip su colonne ~10x più veloce di iterrows() (file piccolo, ok lo stesso)
+        pattern = r'"([^"]+)"'
+        for option_raw, incomp_raw in zip(df.iloc[:, 0], df.iloc[:, 1]):
+            option = str(option_raw).strip()
+            incompatible_options = re.findall(pattern, str(incomp_raw))
             if incompatible_options:
                 exclusions[option] = incompatible_options
 

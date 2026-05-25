@@ -528,11 +528,12 @@ def compute_mean_demands(
     for sku_id, sku_rows_group in sku_groups:
         sku_ids.append(sku_id)
         rows_values = []
-        for _, row in sku_rows_group.iterrows():
+        # Perf: to_dict('records') invece di iterrows() per SKU group
+        for row in sku_rows_group.to_dict('records'):
             row_values = {
                 sku_col: row[sku_col]
                 for sku_col in column_mapping.keys()
-                if sku_col in row.index
+                if sku_col in row
             }
             # [V2] Multi-model expansion: "MSV4+MSV4S" → due entry separate
             if model_sku_col and model_sku_col in row_values:

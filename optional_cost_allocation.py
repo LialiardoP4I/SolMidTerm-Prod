@@ -187,7 +187,8 @@ def allocate(ss_df: pd.DataFrame,
 
     records = []
 
-    for _, ss_row in ss_df.iterrows():
+    # Perf: to_dict('records') ~10x più veloce di iterrows() su DataFrame SS
+    for ss_row in ss_df.to_dict('records'):
         sku      = ss_row["SKU"]
         ss_cost  = ss_row.get("prezzo_safety", np.nan)
         ss_units = ss_row.get("safety_stock_p99_total", np.nan)
@@ -224,7 +225,8 @@ def allocate(ss_df: pd.DataFrame,
         # Alloca riga per riga
         row_alloc: dict[tuple, float] = {}   # (tipo, col, val) -> costo
 
-        for _, cat in comp.iterrows():
+        # Perf: to_dict('records') ~10x più veloce di iterrows() per i componenti
+        for cat in comp.to_dict('records'):
             row_cost = ss_cost * cat["_w"]
             model    = str(cat.get("Model", "")).strip()
 

@@ -292,7 +292,8 @@ def match_sku_with_supermodel(
 
     print(f"\n  Matching {n_sku} SKU...")
 
-    for idx, (_, sku_row) in enumerate(sku_catalog.iterrows()):
+    # Perf: to_dict('records') ~10x più veloce di iterrows() per N alti
+    for idx, sku_row in enumerate(sku_catalog.to_dict('records')):
         if (idx + 1) % max(1, n_sku // 10) == 0:
             print(f"    {idx + 1}/{n_sku}...", end="\r")
             sys.stdout.flush()
@@ -303,7 +304,7 @@ def match_sku_with_supermodel(
         # Estrai caratteristiche rilevanti per questo SKU
         sku_config = {}
         for sku_col, sim_col in column_mapping.items():
-            if sku_col in sku_row.index:
+            if sku_col in sku_row:
                 val = str(sku_row[sku_col]).strip().lower()
                 if val and val != "no":
                     sku_config[sim_col] = val
