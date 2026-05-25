@@ -697,7 +697,8 @@ def _populate_row_from_condition_v2(row, condition, parser, col_structure,
     # =========================================================================
     calc_offset = len(calculated_cols)
 
-    for i, (calc_name, search_key) in enumerate([(c[2], c[3]) for c in calculated_cols]):
+    for i, c in enumerate(calculated_cols):
+        calc_name, search_key = c[2], c[3]
         value = "No"
         is_bundle = (search_key is None)  # True = bundle, False = caratteristica
 
@@ -1830,7 +1831,8 @@ def process_excel_to_matrix_v2(excel_path: str = None,
     priority_orders = {}
     # Caratteristiche che usano esplicitamente la priorità (come rider_seat_order in V1)
     priority_chars = {'RIDER SEAT', 'PILLION SEAT'}
-    for calc_name, search_key in [(c[2], c[3]) for c in calculated_cols]:
+    for c in calculated_cols:
+        calc_name, search_key = c[2], c[3]
         if search_key is not None and search_key in priority_chars:
             order = load_priority_order_from_tr(tr_file, search_key)
             if order:
@@ -1871,7 +1873,8 @@ def process_excel_to_matrix_v2(excel_path: str = None,
     calc_indices = {}
     mapping_cols_count = len(col_structure) - len(calculated_cols) - 4
 
-    for calc_name, search_key in [(c[2], c[3]) for c in calculated_cols]:
+    for c in calculated_cols:
+        calc_name, search_key = c[2], c[3]
         indices = []
 
         if search_key is not None and calc_name in priority_orders:

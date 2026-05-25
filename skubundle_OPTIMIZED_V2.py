@@ -92,7 +92,10 @@ def _strip_and_consolidate(df_in: pd.DataFrame,
     # nel file Excel sorgente (non generati da pandas ma scritti tali-quali)
     new_names = [re.sub(r'\.\d+$', '', pname_to_raw.get(c, c)) for c in df_in.columns]
 
-    dup_before = {c for c in new_names if new_names.count(c) > 1}
+    # Perf: Counter O(N) invece di list.count() in comprehension O(N²)
+    from collections import Counter
+    _name_counts = Counter(new_names)
+    dup_before = {c for c, n in _name_counts.items() if n > 1}
     if not dup_before:
         # Nessun duplicato: rinomina e restituisci
         df_out = df_in.copy()
@@ -222,26 +225,29 @@ def _collapse_pack_color_columns(df: pd.DataFrame,
     # Pre-calcola per ogni (bundle_norm, row_idx) se il pack e' attivo.
     # Usa la colonna calcolata (autorevole) se disponibile, altrimenti
     # deriva l'attivita' dalle colonne raw del mapping (comportamento precedente).
+    # Perf: vettorializza valutazione attivita' pack invece di iloc cell-by-cell
     pack_active = {}  # (bundle_norm, row_idx) -> bool
     for b_norm, all_cols in bundle_all_col_indices.items():
         if b_norm in calc_pack_col_indices:
             # Colonna calcolata disponibile: usa Yes/No/Not gia' risolti
             calc_idx = calc_pack_col_indices[b_norm]
+            col_vals = df.iloc[:, calc_idx].astype(str).str.strip().str.lower()
+            mask = ~col_vals.isin(_inactive_vals)
             for row_idx in range(n_rows):
-                cell = df.iloc[row_idx, calc_idx]
-                cell_str = str(cell).strip().lower() if pd.notna(cell) else ''
-                pack_active[(b_norm, row_idx)] = cell_str not in _inactive_vals
+                pack_active[(b_norm, row_idx)] = bool(mask.iloc[row_idx])
         else:
-            # Fallback: deriva attivita' dalle colonne raw del mapping
             valid_cols = [ci for ci in all_cols if ci < df.shape[1]]
+            if valid_cols:
+                sub = df.iloc[:, valid_cols].astype(str).apply(
+                    lambda s: s.str.strip().str.lower()
+                )
+                notna_mask = df.iloc[:, valid_cols].notna()
+                in_inactive = sub.isin(_inactive_vals)
+                active_mask = (notna_mask & ~in_inactive).any(axis=1)
+            else:
+                active_mask = pd.Series(False, index=df.index)
             for row_idx in range(n_rows):
-                active = False
-                for ci in valid_cols:
-                    cell = df.iloc[row_idx, ci]
-                    if pd.notna(cell) and str(cell).strip().lower() not in _inactive_vals:
-                        active = True
-                        break
-                pack_active[(b_norm, row_idx)] = active
+                pack_active[(b_norm, row_idx)] = bool(active_mask.iloc[row_idx])
 
     new_cols = {}  # col_name -> list of values
 
