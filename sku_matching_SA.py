@@ -198,7 +198,7 @@ def parse_month_to_sortable(month_str: str) -> tuple:
             return (int(year), month_num)
         else:
             return (9999, 99)
-    except:
+    except Exception:
         return (9999, 99)
 
 

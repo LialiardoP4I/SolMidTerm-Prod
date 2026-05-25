@@ -18,7 +18,10 @@ from openpyxl.styles import (
 )
 from openpyxl.utils import get_column_letter
 import warnings, os
-warnings.filterwarnings('ignore')
+# Restringi soppressione warning a categorie note (FutureWarning/Deprecation)
+# per non nascondere bug futuri.
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PARAMETRI CONFIGURABILI

@@ -31,7 +31,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-warnings.filterwarnings("ignore")
+# Restringi soppressione warning a categorie note per non nascondere bug futuri.
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ── Percorsi ──────────────────────────────────────────────────────────────────
 # Bugfix: BASE risolto relativo al file (script-dir) invece di hardcoded

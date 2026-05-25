@@ -81,7 +81,10 @@ import os
 import tempfile
 import warnings
 
-warnings.filterwarnings('ignore')
+# Restringi soppressione warning a categorie note (FutureWarning/Deprecation)
+# per non nascondere bug futuri (es. DeprecationWarning su .values, applymap, ecc.)
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 
 # ============================================================================
@@ -1179,7 +1182,7 @@ def parse_month_to_sortable(month_str: str) -> tuple:
             return (int(year), month_num)
         else:
             return (9999, 99)  # Valore alto per mettere in fondo
-    except:
+    except Exception:
         return (9999, 99)
 
 

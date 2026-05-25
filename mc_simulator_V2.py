@@ -467,11 +467,20 @@ def generate_valid_configuration_fast(model: str,
     config = generate_configuration_fast(model, char_names, char_weights)
 
     # Ciclo di risoluzione conflitti
+    last_conflicts_signature = None
     for iteration in range(max_iterations):
         conflicts = find_conflicts(config, exclusions)
 
         if not conflicts:
             break  # Nessun conflitto, configurazione valida
+
+        # Detect stagnazione: se i conflitti non cambiano tra iterazioni,
+        # force_option_to_not non sta risolvendo nulla (es. char non in
+        # characteristics). Esci subito per evitare loop infinito silenzioso.
+        sig = tuple(sorted(str(c) for c in conflicts))
+        if sig == last_conflicts_signature:
+            break
+        last_conflicts_signature = sig
 
         total_conflicts_resolved += len(conflicts)
 

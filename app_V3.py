@@ -375,9 +375,13 @@ selected_start_month = ""
 if file_exists(demand_path):
     demand_months = get_demand_months(str(demand_path))
 
-# Default confidenza TR
-_aff_def_model    = _AFF_LEVELS[-1]
-_aff_def_optional = _AFF_LEVELS[len(_AFF_LEVELS) // 2]
+# Default confidenza TR (guard contro _AFF_LEVELS vuoto)
+if _AFF_LEVELS:
+    _aff_def_model    = _AFF_LEVELS[-1]
+    _aff_def_optional = _AFF_LEVELS[len(_AFF_LEVELS) // 2]
+else:
+    _aff_def_model    = "MEDIA"
+    _aff_def_optional = "MEDIA"
 
 
 # ============================================================================
@@ -1309,8 +1313,12 @@ if _active_module == "ss":
                         except Exception:
                             return ""
 
+                    # Styler.applymap deprecato in pandas 2.1+, sostituito con .map.
+                    _styled_piv = (_piv_ss.style.map(_style_ss)
+                                   if hasattr(_piv_ss.style, 'map')
+                                   else _piv_ss.style.applymap(_style_ss))
                     st.dataframe(
-                        _piv_ss.style.applymap(_style_ss),
+                        _styled_piv,
                         use_container_width=True,
                         height=38 + 35 * len(_piv_ss),
                     )
@@ -1462,11 +1470,19 @@ if _active_module == "ss":
                     "MEDIA": "MEDIA (VSS=1000) — modello precedente",
                     "ALTA":  "ALTA (VSS=5000) — storico consolidato",
                 }
+                # Guard ValueError: se il valore in session_state non è (più) in
+                # _AFF_LEVELS (es. JSON config modificato), fallback al default.
+                _ss_aff_model = st.session_state.get("ss_aff_model", _aff_def_model)
+                _ss_aff_opt   = st.session_state.get("ss_aff_optional", _aff_def_optional)
+                _idx_model = _AFF_LEVELS.index(_ss_aff_model) if _ss_aff_model in _AFF_LEVELS else (
+                    _AFF_LEVELS.index(_aff_def_model) if _aff_def_model in _AFF_LEVELS else 0)
+                _idx_opt   = _AFF_LEVELS.index(_ss_aff_opt) if _ss_aff_opt in _AFF_LEVELS else (
+                    _AFF_LEVELS.index(_aff_def_optional) if _aff_def_optional in _AFF_LEVELS else 0)
                 st.selectbox(
                     "Model Mix (L0)",
                     options=_AFF_LEVELS,
                     format_func=lambda x: _aff_format.get(x, x),
-                    index=_AFF_LEVELS.index(st.session_state.get("ss_aff_model", _aff_def_model)),
+                    index=_idx_model,
                     help="Confidenza sulla ripartizione tra varianti (MSV4/MSV4S/MSV4PP). Consigliato: ALTA.",
                     key="ss_aff_model",
                 )
@@ -1474,7 +1490,7 @@ if _active_module == "ss":
                     "Optional (L1)",
                     options=_AFF_LEVELS,
                     format_func=lambda x: _aff_format.get(x, x),
-                    index=_AFF_LEVELS.index(st.session_state.get("ss_aff_optional", _aff_def_optional)),
+                    index=_idx_opt,
                     help="Confidenza sui TR delle opzioni/accessori. Pre-lancio: BASSA. Con dati vendita: MEDIA/ALTA.",
                     key="ss_aff_optional",
                 )
@@ -1709,10 +1725,16 @@ if _active_module == "ss":
                     with fc:
                         if "Lead_Time_Months_Ceil" in df_m.columns:
                             import math
-                            _lt_min = int(df_m["Lead_Time_Months_Ceil"].min())
-                            _lt_max = math.ceil(df_m["Lead_Time_Months_Ceil"].max())
-                            g_lt = st.slider("Lead Time (mesi)", _lt_min, _lt_max,
-                                             (_lt_min, _lt_max), key="an_lt")
+                            # Guard: se la colonna è tutta NaN, min/max ritornano NaN
+                            # e int(NaN)/math.ceil(NaN) sollevano ValueError.
+                            _lt_clean = df_m["Lead_Time_Months_Ceil"].dropna()
+                            if _lt_clean.empty:
+                                g_lt = (0, 99)
+                            else:
+                                _lt_min = int(_lt_clean.min())
+                                _lt_max = math.ceil(_lt_clean.max())
+                                g_lt = st.slider("Lead Time (mesi)", _lt_min, _lt_max,
+                                                 (_lt_min, _lt_max), key="an_lt")
                         else:
                             g_lt = (0, 99)
                     with fd:
@@ -2017,10 +2039,11 @@ if _active_module == "ss":
                             _eff["SKU"].astype(str) + " – "
                             + _eff["Description"].astype(str).str[:40]
                         )
-                        _ax_max = max(
-                            float(_eff["_pct_ss"].quantile(0.97)),
-                            float(_eff["_pct_dem"].quantile(0.97)),
-                        ) * 1.20
+                        # Guard quantile su Series vuota → NaN, propagato a max
+                        # produce NaN che rompe plotly (axis range).
+                        _q_ss  = _eff["_pct_ss"].dropna().quantile(0.97) if not _eff["_pct_ss"].dropna().empty else 1.0
+                        _q_dem = _eff["_pct_dem"].dropna().quantile(0.97) if not _eff["_pct_dem"].dropna().empty else 1.0
+                        _ax_max = max(float(_q_ss), float(_q_dem)) * 1.20
 
                         fig_eff = px.scatter(
                             _eff,
@@ -2377,9 +2400,10 @@ if _active_module == "ss":
                         search_sku = st.text_input("Cerca SKU / Codice",
                                                    placeholder="es: Z_COLOR, RED, ...")
                     with f2:
+                        # is_numeric_dtype copre tutti i dtype numerici (int8/16/32/64,
+                        # float32/64, Int64 nullable). Più robusto del check con lista.
                         sort_col_opts = [c for c in vis_cols
-                                         if df_results[c].dtype in [np.float64, np.int64,
-                                                                     float, int]]
+                                         if pd.api.types.is_numeric_dtype(df_results[c])]
                         sort_by = st.selectbox(
                             "Ordina per", sort_col_opts,
                             index=(sort_col_opts.index(col_ss_total)
@@ -3216,16 +3240,15 @@ if _active_module == "ss":
                         # ── Filtri ───────────────────────────────────────────
                         _tri_c1, _tri_c2 = st.columns(2)
                         with _tri_c1:
+                            # Guard df vuoto / colonna tutta NaN → max() ritorna NaN
+                            # → st.slider con max_value=NaN crasha.
+                            _tri_max_val = _tri_df["TR_Medio_%_Media"].fillna(0).max()
+                            _tri_max_val = float(_tri_max_val) if pd.notna(_tri_max_val) and _tri_max_val > 0 else 100.0
                             _tri_tr_min, _tri_tr_max = st.slider(
                                 "Filtro TR Nominale Media (%)",
                                 min_value=0.0,
-                                max_value=float(
-                                    _tri_df["TR_Medio_%_Media"].fillna(0).max()
-                                ),
-                                value=(
-                                    0.0,
-                                    float(_tri_df["TR_Medio_%_Media"].fillna(0).max()),
-                                ),
+                                max_value=_tri_max_val,
+                                value=(0.0, _tri_max_val),
                                 step=0.5,
                                 key="tri_slider",
                             )
@@ -3253,9 +3276,12 @@ if _active_module == "ss":
 
                         # Calcola delta per il grafico
                         _tri_filt_plot = _tri_filt.copy()
+                        # Guard divisione per zero senza inflazionare delta a basso TR:
+                        # usa NaN dove medio=0 invece di +0.001 (che alterava valori reali).
+                        _tr_medio = _tri_filt_plot['TR_Medio_%_Media']
                         _tri_filt_plot['Delta_TR_%_Media'] = (
-                            (_tri_filt_plot['TR_Massimo_%_Media'] - _tri_filt_plot['TR_Medio_%_Media'])
-                            / (_tri_filt_plot['TR_Medio_%_Media'] + 0.001) * 100
+                            (_tri_filt_plot['TR_Massimo_%_Media'] - _tr_medio)
+                            / _tr_medio.where(_tr_medio != 0, np.nan) * 100
                         ).round(2)
 
                         _tri_fig = px.scatter(
