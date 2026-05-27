@@ -53,6 +53,14 @@ from mid_term.matching import (
     build_column_mapping_auto,
     load_lead_times,
 )
+from mid_term.pipeline import SafetyStockPipeline
+from mid_term.results import (
+    TRData,
+    BOMData,
+    SimulationResult,
+    MatchResult,
+    SafetyStockResult,
+)
 
 __all__ = [
     "PipelineConfig",
@@ -91,4 +99,10 @@ __all__ = [
     "normalize_value_cached",
     "build_column_mapping_auto",
     "load_lead_times",
+    "SafetyStockPipeline",
+    "TRData",
+    "BOMData",
+    "SimulationResult",
+    "MatchResult",
+    "SafetyStockResult",
 ]
