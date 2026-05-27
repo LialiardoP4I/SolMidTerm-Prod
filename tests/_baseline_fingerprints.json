@@ -1,0 +1,14 @@
+{
+  "tr_models": [
+    "MSV4",
+    "MSV4PP",
+    "MSV4RI",
+    "MSV4RS",
+    "MSV4S"
+  ],
+  "tr_alphas_sum": 0.9999999999999999,
+  "n_characteristics": 51,
+  "mc_fingerprint": "030d87d697047f632d891612bbc47c1c483d6952d49f5436f6f1a09c9a697168",
+  "mc_total_bikes": 6000,
+  "mc_n_combos": 5866
+}
