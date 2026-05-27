@@ -81,6 +81,8 @@ import os
 import tempfile
 import warnings
 
+from tr_parser_V2 import canonical_model_name
+
 # Restringi soppressione warning a categorie note (FutureWarning/Deprecation)
 # per non nascondere bug futuri (es. DeprecationWarning su .values, applymap, ecc.)
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -656,7 +658,16 @@ class NormalizationCache:
         if pd.isna(value):
             result = "no"
         else:
-            value_str = str(value).strip().lower()
+            # Rimuove caratteri Unicode invisibili (ZWS/ZWNJ/ZWJ/BOM/NBSP/...)
+            # presenti in alcuni export Excel da PDF/Word/SAP: prima del normale
+            # strip+lower garantisce match simmetrico fra catalogo SKU e
+            # output simulazione canonicalizzati a monte.
+            value_str = str(value)
+            for _ch in ('​', '‌', '‍', '﻿',
+                        ' ', ' ', '⁠', '᠎'):
+                if _ch in value_str:
+                    value_str = value_str.replace(_ch, '')
+            value_str = value_str.strip().lower()
 
             # "Nessuno" è equivalente a "no" (opzione non selezionata)
             if value_str == "nessuno":
@@ -1510,12 +1521,15 @@ def main_sku_v2(simulation_output: pd.DataFrame,
     def _is_no_val(v):
         return str(v).strip().lower() in ('no', 'nan', '')
 
-    # Tutti i modelli distinti nel catalogo (gestisce "MSV4+MSV4S" split)
+    # Tutti i modelli distinti nel catalogo (gestisce "MSV4+MSV4S" split).
+    # Canonicalizza per coerenza con la colonna Model dell'output simulazione.
     _all_models_catalog = set()
     if _model_col:
         for _mv in sku_catalog_raw[_model_col].dropna().unique():
             for _m in str(_mv).split('+'):
-                _all_models_catalog.add(_m.strip())
+                _canon = canonical_model_name(_m)
+                if _canon:
+                    _all_models_catalog.add(_canon)
 
     _flag_rows = []
     for _sku, _grp in sku_catalog_raw.groupby('Numero componenti'):
@@ -1527,7 +1541,9 @@ def main_sku_v2(simulation_output: pd.DataFrame,
         if _model_col:
             for _mv in _grp[_model_col].dropna():
                 for _m in str(_mv).split('+'):
-                    _sku_models.add(_m.strip())
+                    _canon = canonical_model_name(_m)
+                    if _canon:
+                        _sku_models.add(_canon)
         _not_all = bool(_all_models_catalog) and (_sku_models != _all_models_catalog)
         _flag_rows.append({'SKU': _sku, 'SOLO_MODELLO': _all_no and _not_all})
 

@@ -40,7 +40,10 @@ LOGICA INVARIATA: L'output è identico al simulatore originale
 
 import numpy as np
 import pandas as pd
-from tr_parser_V2 import parse_tr_file, load_monthly_tr, get_tr_for_month, ModelMix, CharacteristicGroup
+from tr_parser_V2 import (
+    parse_tr_file, load_monthly_tr, get_tr_for_month,
+    ModelMix, CharacteristicGroup, canonical_model_name,
+)
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from collections import defaultdict
@@ -659,35 +662,17 @@ def run_single_month_simulation_optimized(
 
     char_names = list(month_characteristics.keys())
 
-    # Filtra modelli: esclude "ALTRO" che non è un modello reale
-    # Normalizza nomi modello: 'MSV RS' -> 'MSV4RS', 'MSV RI' -> 'MSV4RI', ecc.
-    # Serve quando il foglio TR_Model ha nomi come 'MSV RS' invece di 'MSV4RS',
-    # che altrimenti non farebbero match con le colonne BOM (es. MSV4RS).
-    def _normalize_model_name(m: str) -> str:
-        """Normalizza nome modello MSV4-family: 'MSV RS' / 'MSVRS' -> 'MSV4RS'."""
-        norm = m.strip().upper().replace(' ', '').replace('_', '')
-        # Se inizia con 'MSV' ma non ha '4' in quarta posizione -> inserisci '4'
-        if norm.startswith('MSV') and len(norm) > 3 and norm[3] != '4':
-            return 'MSV4' + norm[3:]
-        return m.strip()
-
-    valid_models = [
-        _normalize_model_name(m)
-        for m in month_model_mix.models
-        if m.strip().upper() != "ALTRO"
+    # Canonicalizza i nomi modello (ZWS/invisibili/casing) ed escludi "ALTRO"
+    # e celle vuote. Il filtraggio in un unico passaggio zip-pair garantisce
+    # che len(valid_models) == len(valid_alphas) anche se ci sono piu' righe
+    # ALTRO o nomi vuoti, eliminando il rischio di mismatch in np.delete.
+    _pairs = [
+        (canonical_model_name(m), a)
+        for m, a in zip(month_model_mix.models, month_model_mix.alphas)
+        if canonical_model_name(m) not in ('', 'ALTRO')
     ]
-
-    # Rimuovi alpha del modello ALTRO
-    altro_idx = None
-    for i, m in enumerate(month_model_mix.models):
-        if m.strip().upper() == "ALTRO":
-            altro_idx = i
-            break
-
-    if altro_idx is not None:
-        valid_alphas = np.delete(month_model_mix.alphas, altro_idx)
-    else:
-        valid_alphas = month_model_mix.alphas
+    valid_models = [p[0] for p in _pairs]
+    valid_alphas = np.array([p[1] for p in _pairs], dtype=float)
 
     # Pre-computa pesi caratteristiche (verranno aggiornati per ogni run)
     model_char_weights = {}
@@ -1335,9 +1320,12 @@ def apply_pack_colors_to_wide_df(df_wide: pd.DataFrame, pack_color_mapping: dict
 
         pack_active = df_wide[pack_col_actual].astype(str).str.lower() == 'yes'
 
-        # Filtra per Model ID: RS (MSV4RS) ha pack fissi, nessuna derivazione da ZCOL
+        # Filtra per Model ID: RS (MSV4RS) ha pack fissi, nessuna derivazione da ZCOL.
+        # Canonicalizza il valore prima del confronto per essere resilienti a
+        # eventuali invisibili / casing residui nella colonna Model.
         if model_id_col is not None:
-            model_mask = df_wide[model_id_col].astype(str).str.lower().isin(model_ids_include)
+            model_canon = df_wide[model_id_col].map(canonical_model_name).str.lower()
+            model_mask = model_canon.isin(model_ids_include)
             pack_active = pack_active & model_mask
         else:
             print(f"  [WARN] Colonna 'Model ID' non trovata -> filtro modello non applicato "

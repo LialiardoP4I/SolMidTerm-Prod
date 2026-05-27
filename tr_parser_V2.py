@@ -36,6 +36,60 @@ def _load_affidabilita_config(path: str = _AFFIDABILITA_CONFIG_PATH) -> Dict[str
 _AFFIDABILITA_MAP: Dict[str, float] = _load_affidabilita_config()
 
 
+# ---------------------------------------------------------------------------
+# Canonicalizzazione nomi modello
+# ---------------------------------------------------------------------------
+# Caratteri Unicode invisibili che Excel puo' iniettare nei nomi (copy/paste
+# da PDF, Word, browser, export SAP). Rimossi prima di qualsiasi confronto.
+#   U+200B ZERO WIDTH SPACE       U+200C ZERO WIDTH NON-JOINER
+#   U+200D ZERO WIDTH JOINER      U+FEFF BYTE ORDER MARK / ZWNBSP
+#   U+00A0 NO-BREAK SPACE         U+202F NARROW NO-BREAK SPACE
+#   U+2060 WORD JOINER            U+180E MONGOLIAN VOWEL SEPARATOR
+_INVISIBLE_CHARS = ('​', '‌', '‍', '﻿',
+                    ' ', ' ', '⁠', '᠎')
+
+
+def canonical_model_name(raw) -> str:
+    """
+    Canonicalizza un nome modello in forma confrontabile end-to-end.
+
+    Operazioni (in ordine):
+      1. Guard NaN/None/cella vuota -> stringa vuota ''.
+      2. str() per gestire input non-stringa senza creare la stringa 'nan'.
+      3. Rimozione di tutti i caratteri Unicode invisibili noti.
+      4. strip() + upper().
+
+    NON modifica spazi interni, underscore o lunghezza del nome: i nomi
+    reali (MSV4, MSV4S, MSV4PP, MSV4RS, MSV4RI, PANV47G, PANV4S7G,
+    PAN7GSP, DVLV4, DVLV4S, ...) vengono preservati esattamente, solo
+    ripuliti da invisibili e casing inconsistente.
+
+    Casi limite:
+      - raw is None     -> ''
+      - raw is NaN      -> ''
+      - raw == 'MSV4​' -> 'MSV4'
+      - raw == ' msv4s '    -> 'MSV4S'
+
+    Il chiamante deve filtrare le stringhe vuote prima di usarle come
+    chiave modello.
+    """
+    if raw is None:
+        return ''
+    # Pandas NaN: float('nan') != float('nan'), test con isinstance + math.isnan
+    if isinstance(raw, float):
+        try:
+            import math
+            if math.isnan(raw):
+                return ''
+        except Exception:
+            pass
+    s = str(raw)
+    for ch in _INVISIBLE_CHARS:
+        if ch in s:
+            s = s.replace(ch, '')
+    return s.strip().upper()
+
+
 @dataclass
 class ModelMix:
     """Model selection distribution (Level 0 Dirichlet)"""
@@ -82,8 +136,15 @@ class CharacteristicGroup:
 
     @staticmethod
     def _norm(s: str) -> str:
-        """Normalizza nome modello: maiuscolo, senza spazi/underscore."""
-        return s.strip().upper().replace(' ', '').replace('_', '')
+        """
+        Normalizza nome modello per il lookup interno.
+
+        Delega a canonical_model_name + rimozione spazi/underscore residui:
+        questa funzione conserva la retrocompatibilita' del matching fuzzy
+        in _lookup (es. legacy 'MSV RS' -> 'MSVRS') senza alterare la forma
+        canonica usata dal resto della pipeline.
+        """
+        return canonical_model_name(s).replace(' ', '').replace('_', '')
 
     def get_tr(self, model_name: str) -> np.ndarray:
         """
@@ -245,8 +306,16 @@ def parse_model_mix(filepath: str, sheet: str = 'TR-Model') -> ModelMix:
                               probe_col='CONCAT Nome Opzione/Bundle')
     df = pd.read_excel(filepath, sheet_name=sheet, header=_hdr)
 
-    models     = df['CONCAT Nome Opzione/Bundle - Caratteristica'].tolist()
-    take_rates = df['Take Rate Model'].values
+    raw_models = df['CONCAT Nome Opzione/Bundle - Caratteristica'].tolist()
+    raw_trs    = df['Take Rate Model'].tolist()
+
+    # Canonicalizza nomi modello e scarta righe vuote/NaN mantenendo
+    # l'allineamento posizionale fra models e take_rates.
+    pairs = [(canonical_model_name(m), tr)
+             for m, tr in zip(raw_models, raw_trs)
+             if canonical_model_name(m) != '']
+    models     = [p[0] for p in pairs]
+    take_rates = np.array([p[1] for p in pairs], dtype=float)
 
     # Alpha = TR direttamente (nessuna pre-moltiplicazione).
     # rescale_alphas in app_v3 applica alpha = TR × AFF_MAP[ui_choice]
@@ -661,8 +730,15 @@ def load_monthly_tr(
                 _hdr_mod = _detect_header_row(filepath, mod_sheet,
                                               probe_col='CONCAT Nome Opzione/Bundle')
                 df_model  = pd.read_excel(filepath, sheet_name=mod_sheet, header=_hdr_mod)
-                models    = df_model['CONCAT Nome Opzione/Bundle - Caratteristica'].tolist()
-                trs       = df_model['Take Rate Model'].values
+                raw_models = df_model['CONCAT Nome Opzione/Bundle - Caratteristica'].tolist()
+                raw_trs    = df_model['Take Rate Model'].tolist()
+                # Canonicalizza nomi modello e scarta righe vuote/NaN
+                # mantenendo l'allineamento posizionale fra models e trs.
+                pairs = [(canonical_model_name(m), tr)
+                         for m, tr in zip(raw_models, raw_trs)
+                         if canonical_model_name(m) != '']
+                models = [p[0] for p in pairs]
+                trs    = np.array([p[1] for p in pairs], dtype=float)
                 # Alpha calcolato: Take Rate × moltiplicatore(Affidabilità TR)
                 aff_col_m = next(
                     (c for c in df_model.columns if c.strip().upper().startswith('AFFIDABILIT')),

@@ -28,6 +28,8 @@ import os
 import time
 from datetime import datetime
 
+from tr_parser_V2 import canonical_model_name
+
 
 # ============================================================================
 # UTILITY CONDIVISE (precedentemente in sku_matching_V2 / sku_matching_SS)
@@ -317,13 +319,17 @@ def match_sku_with_supermodel(
                 sim_vals = simulation_output[sim_col].astype(str).str.strip().str.lower()
                 match_mask &= (sim_vals == sku_val)
 
-        # Match supermodel (se presente)
+        # Match supermodel (se presente).
+        # Canonicalizza entrambi i lati per essere resilienti a invisibili/
+        # casing residui. canonical_model_name garantisce simmetria tra il
+        # valore della colonna 'Model' (output simulazione) e il Supermodel
+        # del catalogo SA.
         if "Model" in simulation_output.columns:
-            model_vals = simulation_output["Model"].astype(str).str.strip().str.lower()
-            supermodel_lower = supermodel.lower()
+            model_vals = simulation_output["Model"].map(canonical_model_name).str.lower()
+            supermodel_canon = canonical_model_name(supermodel).lower()
             # Match esatto o contenimento
             # Bugfix: regex=False evita interpretazione di metachar regex (es. '(', '+') in supermodel
-            match_mask &= (model_vals == supermodel_lower) | (model_vals.str.contains(supermodel_lower, na=False, regex=False))
+            match_mask &= (model_vals == supermodel_canon) | (model_vals.str.contains(supermodel_canon, na=False, regex=False))
 
         # Aggrega domanda per questo (SKU, Supermodel)
         # Logica corretta:
