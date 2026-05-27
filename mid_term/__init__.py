@@ -27,6 +27,14 @@ from mid_term.tr import (
     load_monthly_tr,
     get_tr_for_month,
 )
+from mid_term.bom import (
+    process_excel_to_matrix_v2,
+    crea_tutte_righe_univoche_v2,
+    process_combination,
+    run_quality_checks,
+    build_unified_mapping,
+    consolidate_results,
+)
 
 __all__ = [
     "PipelineConfig",
@@ -45,4 +53,10 @@ __all__ = [
     "parse_model_mix",
     "load_monthly_tr",
     "get_tr_for_month",
+    "process_excel_to_matrix_v2",
+    "crea_tutte_righe_univoche_v2",
+    "process_combination",
+    "run_quality_checks",
+    "build_unified_mapping",
+    "consolidate_results",
 ]
