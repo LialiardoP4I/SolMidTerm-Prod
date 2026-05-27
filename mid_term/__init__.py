@@ -18,6 +18,15 @@ from mid_term.exceptions import (
     SimulationError,
     MatchingError,
 )
+from mid_term.tr import (
+    canonical_model_name,
+    ModelMix,
+    CharacteristicGroup,
+    parse_tr_file,
+    parse_model_mix,
+    load_monthly_tr,
+    get_tr_for_month,
+)
 
 __all__ = [
     "PipelineConfig",
@@ -29,4 +38,11 @@ __all__ = [
     "BOMParseError",
     "SimulationError",
     "MatchingError",
+    "canonical_model_name",
+    "ModelMix",
+    "CharacteristicGroup",
+    "parse_tr_file",
+    "parse_model_mix",
+    "load_monthly_tr",
+    "get_tr_for_month",
 ]
