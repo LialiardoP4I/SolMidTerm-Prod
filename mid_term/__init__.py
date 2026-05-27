@@ -46,6 +46,13 @@ from mid_term.montecarlo import (
     calculate_n_months_needed,
     parse_exclusions,
 )
+from mid_term.matching import (
+    match_skus_ultra_optimized,
+    NormalizationCache,
+    normalize_value_cached,
+    build_column_mapping_auto,
+    load_lead_times,
+)
 
 __all__ = [
     "PipelineConfig",
@@ -79,4 +86,9 @@ __all__ = [
     "load_monthly_forecast",
     "calculate_n_months_needed",
     "parse_exclusions",
+    "match_skus_ultra_optimized",
+    "NormalizationCache",
+    "normalize_value_cached",
+    "build_column_mapping_auto",
+    "load_lead_times",
 ]
