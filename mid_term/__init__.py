@@ -35,6 +35,17 @@ from mid_term.bom import (
     build_unified_mapping,
     consolidate_results,
 )
+from mid_term.montecarlo import (
+    run_monthly_simulations_optimized,
+    run_single_month_simulation_optimized,
+    build_wide_dataframe,
+    apply_pack_colors_to_wide_df,
+    build_zcol_pack_color_mapping,
+    rescale_alphas,
+    load_monthly_forecast,
+    calculate_n_months_needed,
+    parse_exclusions,
+)
 
 __all__ = [
     "PipelineConfig",
@@ -59,4 +70,13 @@ __all__ = [
     "run_quality_checks",
     "build_unified_mapping",
     "consolidate_results",
+    "run_monthly_simulations_optimized",
+    "run_single_month_simulation_optimized",
+    "build_wide_dataframe",
+    "apply_pack_colors_to_wide_df",
+    "build_zcol_pack_color_mapping",
+    "rescale_alphas",
+    "load_monthly_forecast",
+    "calculate_n_months_needed",
+    "parse_exclusions",
 ]
