@@ -35,6 +35,8 @@ from mid_term.bom import (  # noqa: F401
     _find_raw_file,
     _bom_to_str,
     _DEP_COL_ENRICH,
+    _classify_rule,
+    _apply_mostra_nascondi,
 )
 
 # Alias di retro-compatibilita' (alcuni vecchi script usano nome senza suffisso)

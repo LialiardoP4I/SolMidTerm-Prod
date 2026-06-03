@@ -1528,6 +1528,72 @@ def _bom_to_str(v) -> str:
     return str(v).strip()
 
 
+def _classify_rule(C_i: str, D_i: str, O_i: str) -> str:
+    """
+    Classifica riga secondo 5 regole business:
+      R0 - sfusa (O=X)
+      R1 - F + AS!=30
+      R2 - E + AS!=30
+      R3 - N.DEF ('') + AS!=30
+      R4 - F + AS=30
+    """
+    if O_i == "X":                return "R0"
+    if C_i == "F" and D_i != "30": return "R1"
+    if C_i == "E" and D_i != "30": return "R2"
+    if C_i == "" and D_i != "30":  return "R3"
+    if C_i == "F" and D_i == "30": return "R4"
+    return "OTHER"
+
+
+def _apply_mostra_nascondi(lev, tipo, approv, sfusa_bom):
+    """
+    Algoritmo Mostra/Nascondi basato su 5 regole business.
+
+    sfusa_lvl - livello del piu' ampio antenato sfusa attivo.
+                Mai sovrascritto da discendenti sfusa (fix bug J-overwrite
+                del vecchio algoritmo H-L).
+    r1_lvl    - livello del piu' ampio antenato R1 attivo.
+                Blocca TUTTI i discendenti. Si azzera all'uscita dal livello R1.
+
+    Restituisce (check, sfusa_lvl_arr, r1_lvl_arr).
+    """
+    n = len(lev)
+    check         = [""] * n
+    sfusa_lvl_arr = [0]  * n
+    r1_lvl_arr    = [0]  * n
+    sfusa_lvl = 0
+    r1_lvl    = 0
+
+    for i in range(n):
+        G_i = lev[i]; C_i = tipo[i]; D_i = approv[i]; O_i = sfusa_bom[i]
+        Hp_sfusa = sfusa_lvl; Hp_r1 = r1_lvl
+        rule = _classify_rule(C_i, D_i, O_i)
+
+        if   G_i == 1:                          chk = "Mostra"
+        elif Hp_sfusa > 0 and G_i > Hp_sfusa:  chk = "Nascondi"
+        elif rule == "R0":                       chk = "Nascondi"
+        elif Hp_r1 > 0 and G_i > Hp_r1:        chk = "Nascondi"
+        elif rule == "R1":                       chk = "Mostra"
+        elif rule == "R2":                       chk = "Nascondi"
+        elif rule == "R3":                       chk = "Mostra" if G_i == 2 else "Nascondi"
+        elif rule == "R4":                       chk = "Mostra"
+        else:                                    chk = "Nascondi"
+
+        if   G_i <= Hp_sfusa: sfusa_lvl = G_i if O_i == "X" else 0
+        elif O_i == "X":      sfusa_lvl = Hp_sfusa if Hp_sfusa > 0 else G_i
+        else:                 sfusa_lvl = Hp_sfusa
+
+        if   G_i <= Hp_r1: r1_lvl = G_i if rule == "R1" else 0
+        elif Hp_r1 > 0:    r1_lvl = Hp_r1
+        else:              r1_lvl = G_i if rule == "R1" else 0
+
+        check[i]         = chk
+        sfusa_lvl_arr[i] = Hp_sfusa
+        r1_lvl_arr[i]    = Hp_r1
+
+    return check, sfusa_lvl_arr, r1_lvl_arr
+
+
 def _find_raw_file(folder: Path, pattern: str) -> Path:
     """Cerca il primo file che matcha il glob pattern (case-insensitive)."""
     matches = list(folder.glob(pattern))
@@ -1581,56 +1647,18 @@ def enrich_bom_version(ver: str, in_dir, save: bool = True) -> pd.DataFrame:
         lambda v: str(v).count(".") if pd.notna(v) else 0
     )
 
-    # — Formule H-L (Check Generale) ————————————————————————————————————————
-    n      = len(bom)
-    H      = [0] * n;  I_chk = [""] * n
-    J      = [0] * n;  K_chk = [""] * n;  L_chk = [""] * n
+    # — Check Generale (5 regole Mostra/Nascondi) ——————————————————————————
     lev    = bom["Livello numerico"].tolist()
     tipo   = [_bom_to_str(v) for v in bom["Tipo approvv."]]
     approv = [_bom_to_str(v) for v in bom["Approvv. speciale"]]
-    numpos = ([_bom_to_str(v) for v in bom["Numero posizione"]]
-              if "Numero posizione" in bom.columns else [""] * n)
 
-    for i in range(n):
-        G_i = lev[i];  C_i = tipo[i];  D_i = approv[i]
-        O_i = sfusa_bom[i];  R_i = numpos[i]
-        Hp  = H[i - 1] if i > 0 else 0
-        Jp  = J[i - 1] if i > 0 else 0
+    check_gen, sfusa_lvl_arr, r1_lvl_arr = _apply_mostra_nascondi(
+        lev, tipo, approv, sfusa_bom
+    )
 
-        if C_i == "F" and D_i != "30" and O_i != "X" and (Hp >= G_i or Hp == 0):
-            H[i] = G_i
-        elif G_i == Hp and C_i == "F" and D_i != "30" and R_i != "X":
-            H[i] = 0
-        elif G_i <= Hp:
-            H[i] = 0
-        else:
-            H[i] = Hp
-
-        if C_i == "" and G_i == 2 and O_i == "":
-            I_chk[i] = "Mostra"
-        elif C_i in ("E", "") and D_i != "30" and O_i != "X":
-            I_chk[i] = "Nascondi"
-        elif C_i == "F" and D_i != "30" and O_i != "X" and (H[i] == 0 or H[i] == G_i):
-            I_chk[i] = "Mostra"
-        elif Hp > 0 and G_i > Hp:
-            I_chk[i] = "Nascondi"
-        else:
-            I_chk[i] = "Mostra"
-
-        J[i] = G_i if O_i == "X" else (Jp if Jp > 0 and G_i > Jp else 0)
-        K_chk[i] = "Nascondi" if J[i] > 0 else "Mostra"
-        if G_i == 1:
-            L_chk[i] = "Mostra"
-        elif K_chk[i] == "Nascondi" or I_chk[i] == "Nascondi":
-            L_chk[i] = "Nascondi"
-        else:
-            L_chk[i] = "Mostra"
-
-    bom["Livello Segnalibro Merce Non Sfusa"] = H
-    bom["Check Merce non sfusa"]              = I_chk
-    bom["Livello Segnalibro Merce Sfusa"]     = J
-    bom["Check Merce sfusa"]                  = K_chk
-    bom["Check Generale"]                     = L_chk
+    bom["Livello Segnalibro Sfusa"] = sfusa_lvl_arr
+    bom["Livello Segnalibro R1"]    = r1_lvl_arr
+    bom["Check Generale"]           = check_gen
 
     # — BOM125: aggrega colonna dipendenze per componente ———————————————————
     bom125 = pd.read_excel(b125_file, header=0)
@@ -1674,6 +1702,12 @@ def enrich_bom_version(ver: str, in_dir, save: bool = True) -> pd.DataFrame:
             dep_arr[i] = anchor_dep; propagated += 1
     bom[_DEP_COL_ENRICH] = dep_arr
     log.info('  [ENRICH]   Dipendenze propagate: %s', propagated)
+
+    # — Salvataggio pre-filtro ————————————————————————————————————————————
+    if save:
+        pre_file = in_dir / f"BOM_150_PreFilter_{ver}.xlsx"
+        bom.to_excel(pre_file, index=False)
+        log.info('  [ENRICH]   Salvato pre-filtro  : %s', pre_file.name)
 
     # — Filtro Check Generale = Mostra ——————————————————————————————————————
     bom = bom[bom["Check Generale"] == "Mostra"].copy()

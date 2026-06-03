@@ -37,6 +37,7 @@ from gestione_dipendenze_V2 import (
     _build_active_cv_sets,
     _load_states_set,
     load_mapping_from_file,
+    _apply_mostra_nascondi,
 )
 from skubundle import crea_tutte_righe_univoche_v2
 
@@ -130,61 +131,23 @@ def _enrich_bom_full(ver: str, in_dir) -> pd.DataFrame:
         lambda v: str(v).count(".") if pd.notna(v) else 0
     )
 
-    # Formule Check Generale (calcolate ma NON usate per filtrare)
-    n      = len(bom)
-    H      = [0] * n;  I_chk = [""] * n
-    J      = [0] * n;  K_chk = [""] * n;  L_chk = [""] * n
+    # Check Generale (5 regole Mostra/Nascondi — calcolate ma NON usate per filtrare)
     lev    = bom["Livello numerico"].tolist()
     tipo   = [_bom_to_str(v) for v in bom["Tipo approvv."]]
     approv = [_bom_to_str(v) for v in bom["Approvv. speciale"]]
-    numpos = ([_bom_to_str(v) for v in bom["Numero posizione"]]
-              if "Numero posizione" in bom.columns else [""] * n)
 
-    for i in range(n):
-        G_i = lev[i];  C_i = tipo[i];  D_i = approv[i]
-        O_i = sfusa_bom[i];  R_i = numpos[i]
-        Hp  = H[i - 1] if i > 0 else 0
-        Jp  = J[i - 1] if i > 0 else 0
+    check_gen, sfusa_lvl_arr, r1_lvl_arr = _apply_mostra_nascondi(
+        lev, tipo, approv, sfusa_bom
+    )
 
-        if C_i == "F" and D_i != "30" and O_i != "X" and (Hp >= G_i or Hp == 0):
-            H[i] = G_i
-        elif G_i == Hp and C_i == "F" and D_i != "30" and R_i != "X":
-            H[i] = 0
-        elif G_i <= Hp:
-            H[i] = 0
-        else:
-            H[i] = Hp
+    bom["Livello Segnalibro Sfusa"] = sfusa_lvl_arr
+    bom["Livello Segnalibro R1"]    = r1_lvl_arr
+    bom["Check Generale"]           = check_gen
+    # Colonna tracciabilita' SA (non interferisce con process_excel_to_matrix_v2)
+    bom["Check_Generale_SA"]        = check_gen
 
-        if C_i == "" and G_i == 2 and O_i == "":
-            I_chk[i] = "Mostra"
-        elif C_i in ("E", "") and D_i != "30" and O_i != "X":
-            I_chk[i] = "Nascondi"
-        elif C_i == "F" and D_i != "30" and O_i != "X" and (H[i] == 0 or H[i] == G_i):
-            I_chk[i] = "Mostra"
-        elif Hp > 0 and G_i > Hp:
-            I_chk[i] = "Nascondi"
-        else:
-            I_chk[i] = "Mostra"
-
-        J[i] = G_i if O_i == "X" else (Jp if Jp > 0 and G_i > Jp else 0)
-        K_chk[i] = "Nascondi" if J[i] > 0 else "Mostra"
-        if G_i == 1:
-            L_chk[i] = "Mostra"
-        elif K_chk[i] == "Nascondi" or I_chk[i] == "Nascondi":
-            L_chk[i] = "Nascondi"
-        else:
-            L_chk[i] = "Mostra"
-
-    bom["Livello Segnalibro Merce Non Sfusa"] = H
-    bom["Check Merce non sfusa"]              = I_chk
-    bom["Livello Segnalibro Merce Sfusa"]     = J
-    bom["Check Merce sfusa"]                  = K_chk
-    bom["Check Generale"]                     = L_chk
-    # Colonna tracciabilità SA (non interferisce con process_excel_to_matrix_v2)
-    bom["Check_Generale_SA"]                  = L_chk
-
-    n_mostra   = sum(1 for v in L_chk if v == "Mostra")
-    n_nascondi = sum(1 for v in L_chk if v == "Nascondi")
+    n_mostra   = sum(1 for v in check_gen if v == "Mostra")
+    n_nascondi = sum(1 for v in check_gen if v == "Nascondi")
     print(f"  [ENRICH-SA]   Mostra:   {n_mostra}")
     print(f"  [ENRICH-SA]   Nascondi: {n_nascondi}  (inclusi in SA)")
 
