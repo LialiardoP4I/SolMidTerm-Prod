@@ -1765,3 +1765,30 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
     df_no_lt = ctx.df_no_lt
     ctx.cleanup()
     return pd.DataFrame(all_results), df_no_lt
+
+
+def match_skus_preserve_run_vectors(sku_catalog, lead_times, simulation_output,
+                                    column_mapping, n_runs, percentile=99):
+    """Come match_skus_ultra_optimized, ma PRESERVA i vettori per-run.
+
+    Returns:
+        ( { sku : (run_demands_bici[n_runs] float32, qty_per_bike float, lead_time float) },
+          df_no_lt )
+    run_demands è in BICI: la moltiplicazione per qty avviene nel pooling.
+    """
+    log.info("MATCHING SKU (PRESERVE RUN VECTORS)")
+    ctx = _build_matching_context(sku_catalog, lead_times, simulation_output,
+                                  column_mapping, n_runs)
+    vectors = {}
+    for sku_id, sku_data in zip(ctx.sku_ids, ctx.sku_data_list):
+        run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
+        if len(matching_indices) == 0:
+            continue
+        # Copia esplicita: data_matrix/memmap viene liberata da cleanup()
+        vectors[sku_id] = (np.array(run_demands, dtype=np.float32, copy=True),
+                           float(sku_data['quantity']),
+                           float(sku_data['lead_time']))
+    df_no_lt = ctx.df_no_lt
+    ctx.cleanup()
+    log.info("Vettori per-run raccolti: %d SKU", len(vectors))
+    return vectors, df_no_lt
