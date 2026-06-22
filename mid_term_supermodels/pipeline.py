@@ -539,6 +539,96 @@ class SafetyStockPipeline:
             elapsed_seconds=elapsed,
         )
 
+    # ---- HOOK MULTI-SUPERMODEL --------------------------------------------
+    def run_collect_run_vectors(self, lead_times=None):
+        """Esegue step 0-2 standard e poi il matching che PRESERVA i vettori per-run.
+
+        Variante di run_step_3_matching pensata per l'orchestratore multi-supermodel:
+        prepara gli STESSI input (sku_catalog, lead_times, column_mapping, n_runs,
+        percentile) ESATTAMENTE come run_step_3_matching, ma sostituisce la chiamata
+        finale match_skus_ultra_optimized con match_skus_preserve_run_vectors, che
+        restituisce i vettori di domanda per-run (in bici) anziche' le statistiche.
+
+        NOTA import: usa `import matching` (non `from mid_term.matching import ...`)
+        cosi' risolve sul package COPIATO (mid_term_supermodels/matching.py), l'unico
+        che espone match_skus_preserve_run_vectors. Gli altri helper (load_lead_times,
+        build_solo_modello_flags, _reinit_norm_cache, build_column_mapping_auto) sono
+        invariati rispetto all'originale: si riusano dagli import a livello modulo.
+
+        Returns:
+            ( { sku : (run_demands_bici[n_runs], qty, lead_time) }, df_no_lt )
+        """
+        import matching  # package copiato: espone match_skus_preserve_run_vectors
+
+        tr  = self.run_step_0_load_tr()
+        _bom = self.run_step_1_build_bom()
+        sim = self.run_step_2_montecarlo(tr)
+
+        # --- Replica della preparazione input di run_step_3_matching ---
+        # (copia 1:1 della logica righe 441-516; ci si ferma PRIMA del matching)
+        percentile = max(1, min(99, int(self.sim_config.percentile_safety_stock)))
+        log.info("Collect run vectors: SKU matching (percentile=%d)", percentile)
+
+        simulation_output = sim.df_wide
+
+        # 1. Prepara catalogo SKU dal BOM step
+        sku_catalog_raw = _bom.catalog.copy()
+        if "ID" in sku_catalog_raw.columns:
+            sku_catalog_raw = sku_catalog_raw.drop(columns=["ID"])
+        sku_catalog = sku_catalog_raw.drop_duplicates(keep="first")
+        log.info("Collect run vectors: catalogo %d righe (raw=%d)",
+                 len(sku_catalog), len(sku_catalog_raw))
+
+        # 3. Identifica n_runs dalle colonne _Run_
+        month_run_cols = [c for c in simulation_output.columns if "_Run_" in c]
+        if month_run_cols:
+            first_prefix = month_run_cols[0].split("_Run_")[0]
+            first_month_cols = [c for c in month_run_cols
+                                if c.startswith(first_prefix)]
+            n_runs = len(first_month_cols)
+        else:
+            n_runs = sim.n_runs
+        log.info("Collect run vectors: n_runs rilevati=%d", n_runs)
+
+        # 4. Costruisci column_mapping auto-detect
+        sku_feature_cols = [c for c in sku_catalog.columns
+                            if c.lower().strip() not in
+                            {"id", "numero componenti",
+                             "numero componenti.1", "versione"}]
+        sim_config_cols = [c for c in simulation_output.columns
+                           if "_Run_" not in c]
+        column_mapping = build_column_mapping_auto(sku_feature_cols, sim_config_cols)
+        log.info("Collect run vectors: column_mapping (%d colonne)", len(column_mapping))
+
+        # 5. Calcola flag SOLO_MODELLO (helper condiviso con il rolling)
+        df_flag_solo_modello = build_solo_modello_flags(sku_catalog_raw, column_mapping)
+        _solo_skus = (set(df_flag_solo_modello.loc[df_flag_solo_modello["SOLO_MODELLO"], "SKU"]
+                          .astype(str))
+                      if len(df_flag_solo_modello) else set())
+
+        # 5b. Carica lead times (se non passati dal chiamante)
+        if lead_times is None:
+            lead_times = load_lead_times(
+                solo_modello_skus=_solo_skus,
+                gate_max_mesi=self.sim_config.gate_max_mesi,
+            )
+        log.info("Collect run vectors: lead_times %d SKU", len(lead_times))
+
+        # 6. Re-inizializza NormalizationCache con prefissi dinamici
+        _reinit_norm_cache(column_mapping)
+
+        # 7. Matching che PRESERVA i vettori per-run (al posto di
+        #    match_skus_ultra_optimized): stessi input di run_step_3_matching.
+        vectors, df_no_lt = matching.match_skus_preserve_run_vectors(
+            sku_catalog=sku_catalog,
+            lead_times=lead_times,
+            simulation_output=simulation_output,
+            column_mapping=column_mapping,
+            n_runs=n_runs,
+            percentile=percentile,
+        )
+        return vectors, df_no_lt
+
     # ---- STEP 4 ------------------------------------------------------------
     def run_step_4_safety_stock(self, mat: MatchResult, bom: BOMData) -> SafetyStockResult:
         """Passo 4 - In parole semplici: calcola la safety stock e la valorizza.
