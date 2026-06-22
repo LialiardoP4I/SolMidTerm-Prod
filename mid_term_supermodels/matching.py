@@ -896,12 +896,20 @@ def load_lead_times(solo_modello_skus=None,
     # 5. Crea Lead_Time_Months_Ceil (stesso valore di Lead_Time_Months per decimali)
     lead_times['Lead_Time_Months_Ceil'] = lead_times['Lead_Time_Months'].copy()
 
-    # 6. Aggiungi Description da Testo breve (Prezzi), fallback a 'Residual LT (da Gates)'
-    if 'Description' in lead_times_residual.columns:
-        desc_map = (lead_times_residual[['SKU', 'Description']]
-                    .drop_duplicates(subset='SKU', keep='first')
-                    .set_index('SKU')['Description'])
-        lead_times['Description'] = lead_times['SKU'].map(desc_map).fillna('Residual LT (da Gates)')
+    # 6. Description: fonte primaria = BOM ('Testo breve oggetto'); fallback 'Non disponibile'.
+    #    df_bom è già caricato sopra (punto 2). La condivisione tra supermodel è implicita
+    #    sul codice 'Numero componenti'.
+    if 'Testo breve oggetto' in df_bom.columns:
+        bom_desc_map = (df_bom[['Numero componenti', 'Testo breve oggetto']]
+                        .dropna(subset=['Testo breve oggetto'])
+                        .assign(_k=df_bom['Numero componenti'].astype(str))
+                        .drop_duplicates(subset='_k', keep='first')
+                        .set_index('_k')['Testo breve oggetto'])
+        lead_times['Description'] = (lead_times['SKU'].astype(str)
+                                     .map(bom_desc_map)
+                                     .fillna('Non disponibile'))
+    else:
+        lead_times['Description'] = 'Non disponibile'
 
     # 7. Filtra: solo lead time non-null
     lead_times = lead_times.dropna(subset=['Lead_Time_Months'])
