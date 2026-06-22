@@ -7,7 +7,7 @@ suoi risultati: TRData (dati TR), BOMData (distinta base), SimulationResult
 (safety stock finale). Servono a passare i dati in modo ordinato da un passo al
 successivo.
 
-ModelMix e CharacteristicGroup vivono in mid_term.tr; qui usati come
+ModelMix e CharacteristicGroup vivono in mid_term_supermodels.tr; qui usati come
 forward reference per evitare import circolari.
 """
 from dataclasses import dataclass, field

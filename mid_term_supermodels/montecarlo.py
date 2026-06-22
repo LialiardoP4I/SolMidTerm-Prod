@@ -541,8 +541,9 @@ def calculate_n_months_needed() -> int:
     Legge da Gates MTSV4.xlsx (Dati Logistica) — col. 'Gates (Weeks)'.
     """
     from pathlib import Path
+    from mid_term_supermodels.config import shared_logistica_dir
 
-    gates_file = Path('.\\Input\\Dati Logistica\\Gates MTSV4.xlsx')
+    gates_file = shared_logistica_dir() / 'Gates MTSV4.xlsx'
 
     if not gates_file.exists():
         raise FileNotFoundError(

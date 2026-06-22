@@ -7,8 +7,8 @@ def test_pooling_sumproduct_and_risk_pooling():
     # SuperA: bici [10,10,10,10] qty 1 -> pezzi [10,10,10,10] (varianza 0)
     # SuperB: bici [0,5,10,20]   qty 2 -> pezzi [0,10,20,40]
     sm_results = {
-        'SuperA': {'X': (np.array([10, 10, 10, 10], dtype=np.float32), 1.0, 1.0)},
-        'SuperB': {'X': (np.array([0, 5, 10, 20], dtype=np.float32), 2.0, 1.0)},
+        'SuperA': {'X': (np.array([10, 10, 10, 10], dtype=np.float32), 1.0, 1.0, 'desc')},
+        'SuperB': {'X': (np.array([0, 5, 10, 20], dtype=np.float32), 2.0, 1.0, 'desc')},
     }
     df_pool, breakdown = matching.pool_safety_stock(sm_results, percentile=99, n_runs=4)
     row = df_pool[df_pool['SKU'] == 'X'].iloc[0]
@@ -32,7 +32,7 @@ def test_pooling_sumproduct_and_risk_pooling():
 def test_pooling_component_in_single_supermodel():
     # Componente 'Y' solo in SuperA
     sm_results = {
-        'SuperA': {'Y': (np.array([1, 2, 3, 4], dtype=np.float32), 1.0, 1.0)},
+        'SuperA': {'Y': (np.array([1, 2, 3, 4], dtype=np.float32), 1.0, 1.0, 'desc')},
         'SuperB': {},
     }
     df_pool, _ = matching.pool_safety_stock(sm_results, percentile=99, n_runs=4)

@@ -11,12 +11,14 @@ def test_preserve_run_vectors_returns_bike_demand():
     vectors, df_no_lt = matching.match_skus_preserve_run_vectors(
         cat, lt, sim, mapping, n_runs=4, percentile=99
     )
-    # SKU1 -> vettore bici [10,10,10,10], qty 1.0, lead_time 1.0
-    rd1, qty1, ltm1 = vectors['SKU1']
+    # SKU1 -> vettore bici [10,10,10,10], qty 1.0, lead_time 1.0, desc 'Comp 1'
+    rd1, qty1, ltm1, desc1 = vectors['SKU1']
     assert rd1.tolist() == [10.0, 10.0, 10.0, 10.0]
     assert qty1 == 1.0
     assert ltm1 == 1.0
+    assert desc1 == 'Comp 1'
     # SKU2 -> vettore bici [0,5,10,20], qty 2.0 (NON ancora moltiplicato)
-    rd2, qty2, ltm2 = vectors['SKU2']
+    rd2, qty2, ltm2, desc2 = vectors['SKU2']
     assert rd2.tolist() == [0.0, 5.0, 10.0, 20.0]
     assert qty2 == 2.0
+    assert desc2 == 'Comp 2'

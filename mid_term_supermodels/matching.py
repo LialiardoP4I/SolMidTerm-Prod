@@ -834,11 +834,14 @@ def load_lead_times(solo_modello_skus=None,
         Quantity_Per_Bike, Description
     """
     from pathlib import Path
+    from mid_term_supermodels.config import shared_logistica_dir
 
     log.info("CARICAMENTO LEAD TIME - V3 (Residual LT da Gates)")
 
     input_dir = Path('.') / 'Input'
-    logistica_dir = input_dir / 'Dati Logistica'
+    # Dati Logistica condivisa tra supermodel (override via env); fallback storico
+    # = input_dir / 'Dati Logistica' quando l'env non e' impostato (single-supermodel).
+    logistica_dir = shared_logistica_dir()
 
     # Trova BOM_150 in qualsiasi sottocartella MODEL/*/
     def _find_bom150(base: Path) -> Path:
@@ -1485,7 +1488,7 @@ def save_results_pooled(df_pool, filename, percentile=99):
     return df_out
 
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -1748,45 +1751,46 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
                                   column_mapping, n_runs)
     log.info("SKU da processare: %d", len(ctx.sku_ids))
 
-    start_time = time.time()
     all_results = []
-    for sku_idx, (sku_id, sku_data) in enumerate(zip(ctx.sku_ids, ctx.sku_data_list)):
-        run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
-        if len(matching_indices) == 0:
-            continue
-        stats = calculate_statistics(run_demands, percentile=percentile)
-
-        monthly_stats = {}
-        for month_idx, prefix in enumerate(ctx.month_prefixes):
-            col_indices_month = ctx.month_col_indices.get(month_idx, [])
-            if not col_indices_month:
+    try:
+        for sku_idx, (sku_id, sku_data) in enumerate(zip(ctx.sku_ids, ctx.sku_data_list)):
+            run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
+            if len(matching_indices) == 0:
                 continue
-            month_data = ctx.data_matrix[np.ix_(matching_indices, col_indices_month)]
-            run_demands_month = month_data.sum(axis=0).astype(np.int32)
-            monthly_stats[prefix] = calculate_statistics(run_demands_month,
-                                                          percentile=percentile)
+            stats = calculate_statistics(run_demands, percentile=percentile)
 
-        ss_key = f'safety_stock_p{percentile}'
-        result = {
-            'SKU': sku_id,
-            'Description': sku_data['description'],
-            'Quantity_Per_Bike': sku_data['quantity'],
-            'Lead_Time_Months': sku_data['lead_time_raw'],
-            'Lead_Time_Months_Ceil': sku_data['lead_time'],
-            'N_Matching_Combinations': len(matching_indices),
-            'N_SKU_Rows_Original': len(sku_data['values']),
-            'monthly_stats': monthly_stats,
-        }
-        result.update(stats)
-        result[f'{ss_key}_total'] = result[ss_key] * sku_data['quantity']
-        all_results.append(result)
+            monthly_stats = {}
+            for month_idx, prefix in enumerate(ctx.month_prefixes):
+                col_indices_month = ctx.month_col_indices.get(month_idx, [])
+                if not col_indices_month:
+                    continue
+                month_data = ctx.data_matrix[np.ix_(matching_indices, col_indices_month)]
+                run_demands_month = month_data.sum(axis=0).astype(np.int32)
+                monthly_stats[prefix] = calculate_statistics(run_demands_month,
+                                                             percentile=percentile)
 
-        if sku_idx % 1000 == 0:
-            gc.collect()
+            ss_key = f'safety_stock_p{percentile}'
+            result = {
+                'SKU': sku_id,
+                'Description': sku_data['description'],
+                'Quantity_Per_Bike': sku_data['quantity'],
+                'Lead_Time_Months': sku_data['lead_time_raw'],
+                'Lead_Time_Months_Ceil': sku_data['lead_time'],
+                'N_Matching_Combinations': len(matching_indices),
+                'N_SKU_Rows_Original': len(sku_data['values']),
+                'monthly_stats': monthly_stats,
+            }
+            result.update(stats)
+            result[f'{ss_key}_total'] = result[ss_key] * sku_data['quantity']
+            all_results.append(result)
+
+            if sku_idx % 1000 == 0:
+                gc.collect()
+    finally:
+        ctx.cleanup()
 
     log.info("SKU con match: %d", len(all_results))
     df_no_lt = ctx.df_no_lt
-    ctx.cleanup()
     return pd.DataFrame(all_results), df_no_lt
 
 
@@ -1795,24 +1799,29 @@ def match_skus_preserve_run_vectors(sku_catalog, lead_times, simulation_output,
     """Come match_skus_ultra_optimized, ma PRESERVA i vettori per-run.
 
     Returns:
-        ( { sku : (run_demands_bici[n_runs] float32, qty_per_bike float, lead_time float) },
+        ( { sku : (run_demands_bici[n_runs] float32, qty_per_bike float,
+                   lead_time float, description str) },
           df_no_lt )
     run_demands è in BICI: la moltiplicazione per qty avviene nel pooling.
+    description = descrizione componente (da BOM), fallback '' / 'Non disponibile'.
     """
     log.info("MATCHING SKU (PRESERVE RUN VECTORS)")
     ctx = _build_matching_context(sku_catalog, lead_times, simulation_output,
                                   column_mapping, n_runs)
     vectors = {}
-    for sku_id, sku_data in zip(ctx.sku_ids, ctx.sku_data_list):
-        run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
-        if len(matching_indices) == 0:
-            continue
-        # Copia esplicita: data_matrix/memmap viene liberata da cleanup()
-        vectors[sku_id] = (np.array(run_demands, dtype=np.float32, copy=True),
-                           float(sku_data['quantity']),
-                           float(sku_data['lead_time']))
+    try:
+        for sku_id, sku_data in zip(ctx.sku_ids, ctx.sku_data_list):
+            run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
+            if len(matching_indices) == 0:
+                continue
+            # Copia esplicita: data_matrix/memmap viene liberata da cleanup()
+            vectors[sku_id] = (np.array(run_demands, dtype=np.float32, copy=True),
+                               float(sku_data['quantity']),
+                               float(sku_data['lead_time']),
+                               sku_data['description'])
+    finally:
+        ctx.cleanup()
     df_no_lt = ctx.df_no_lt
-    ctx.cleanup()
     log.info("Vettori per-run raccolti: %d SKU", len(vectors))
     return vectors, df_no_lt
 
@@ -1821,13 +1830,14 @@ def pool_safety_stock(supermodel_results, percentile=99, n_runs=None):
     """Pool per-run delle domande dei componenti tra supermodel (somma-prodotto).
 
     Args:
-        supermodel_results: { supermodel : { sku : (run_demands_bici[n_runs], qty, lead_time) } }
+        supermodel_results: { supermodel : { sku : (run_demands_bici[n_runs], qty, lead_time, description) } }
         percentile: percentile per la safety stock (default 99).
         n_runs: lunghezza attesa dei vettori (se None, dedotta dal primo vettore).
 
     Returns:
         (df_per_sku_pooled, breakdown_dict)
-        df_per_sku_pooled: una riga per componente con SS pooled + colonne breakdown.
+        df_per_sku_pooled: una riga per componente con SS pooled + Description +
+            colonne breakdown.
         breakdown_dict: { sku : { supermodel : {mean, ss_standalone, qty, lead_time} } }
     """
     ss_key = f'safety_stock_p{percentile}'
@@ -1836,8 +1846,8 @@ def pool_safety_stock(supermodel_results, percentile=99, n_runs=None):
     # Deduci n_runs
     if n_runs is None:
         for sm in supermodels:
-            for _sku, (rd, _q, _lt) in supermodel_results[sm].items():
-                n_runs = len(rd)
+            for _sku, _entry in supermodel_results[sm].items():
+                n_runs = len(_entry[0])
                 break
             if n_runs:
                 break
@@ -1857,13 +1867,16 @@ def pool_safety_stock(supermodel_results, percentile=99, n_runs=None):
         breakdown[sku] = {}
         sum_standalone_ss = 0.0
         lead_times_seen = []
+        description = ''   # prima descrizione non vuota tra i supermodel
         for sm in supermodels:
             entry = supermodel_results[sm].get(sku)
             if entry is None:
                 row[f'mean_demand_{sm}'] = 0.0
                 row[f'{ss_key}_standalone_{sm}'] = 0.0
                 continue
-            run_demands, qty, lead_time = entry
+            run_demands, qty, lead_time, desc = entry
+            if not description and desc and str(desc).strip():
+                description = str(desc).strip()
             pezzi_sm = np.asarray(run_demands, dtype=np.float64) * qty
             pooled += pezzi_sm
             lead_times_seen.append(lead_time)
@@ -1882,6 +1895,7 @@ def pool_safety_stock(supermodel_results, percentile=99, n_runs=None):
         p_pooled = float(np.percentile(pooled, percentile))
         ss_pooled = max(0.0, p_pooled - mean_pooled)
 
+        row['Description'] = description if description else 'Non disponibile'
         row['mean_demand_pooled'] = round(mean_pooled, 4)
         row[f'{ss_key}_pooled'] = round(ss_pooled, 4)
         row['risk_pooling_saving'] = round(sum_standalone_ss - ss_pooled, 4)

@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from mid_term_supermodels._logging import get_logger
-from mid_term_supermodels.config import PipelineConfig, SimulationConfig
+from mid_term_supermodels.config import PipelineConfig, SimulationConfig, shared_logistica_dir
 from mid_term_supermodels.results import (TRData, BOMData, SimulationResult,
                                MatchResult, SafetyStockResult)
 from mid_term_supermodels.tr import load_monthly_tr, parse_tr_file
@@ -648,7 +648,14 @@ class SafetyStockPipeline:
         # 1. Merge prezzi con conversione valuta -> EUR
         if self.config.prices_file:
             try:
-                prezzi_path = self.config.resolve_input(self.config.prices_file)
+                # PREZZI vive nella Dati Logistica CONDIVISA tra supermodel
+                # (override via env MIDTERM_SHARED_LOGISTICA). Fallback storico =
+                # <cwd>/Input/Dati Logistica quando l'env non e' impostato, cioe'
+                # comportamento invariato per il single-supermodel.
+                _logistica = shared_logistica_dir()
+                _prezzi_matches = sorted(_logistica.glob("PREZZI*.XLS*"))
+                prezzi_path = (_prezzi_matches[0] if _prezzi_matches
+                               else _logistica / "PREZZI.XLSX")
                 all_data = pd.read_excel(prezzi_path, sheet_name="Sheet1")
 
                 material_col = "Materiale"

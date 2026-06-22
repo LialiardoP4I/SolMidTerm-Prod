@@ -7,11 +7,25 @@ numero di scenari, percentile, affidabilita', ecc.), con controlli che bloccano
 subito eventuali valori mancanti o errati.
 """
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from mid_term_supermodels.exceptions import ConfigurationError
+
+
+def shared_logistica_dir():
+    """Cartella 'Dati Logistica' condivisa tra supermodel.
+
+    Se la variabile d'ambiente MIDTERM_SHARED_LOGISTICA e' impostata, usa quel
+    percorso; altrimenti il default storico <cwd>/Input/Dati Logistica.
+    Fallback = comportamento invariato per il single-supermodel.
+    """
+    env = os.environ.get('MIDTERM_SHARED_LOGISTICA')
+    if env:
+        return Path(env)
+    return Path('.') / 'Input' / 'Dati Logistica'
 
 
 @dataclass(frozen=True)
