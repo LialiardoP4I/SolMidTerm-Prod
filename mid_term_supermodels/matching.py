@@ -1462,28 +1462,50 @@ def save_results_monthly(results_df: pd.DataFrame,
     return df_monthly
 
 
-def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
-                               lead_times: pd.DataFrame,
-                               simulation_output: pd.DataFrame,
-                               column_mapping: Dict[str, str],
-                               n_runs: int,
-                               percentile: int = 99) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Esegue il matching SKU vs configurazioni MC e calcola statistiche.
+from dataclasses import dataclass, field
 
-    Pre-normalizza l'output simulazione, costruisce la matrice numpy int16
-    (con fallback memmap per dataset > 4 GB), prepara le righe SKU espandendo
-    eventuali modelli combinati (es. 'MSV4+MSV4S' -> entries separate) e per
-    ogni SKU aggrega la domanda dei mesi di lead time e produce statistiche
-    aggregate e mensili (mean, std, percentile, safety stock).
 
-    Returns:
-        (df_results, df_no_lt) — df_results = SKU con statistiche/safety stock;
-        df_no_lt = SKU esclusi perche' senza lead time utile (LT mancante o <= 0),
-        con colonna 'Motivo' (replica main_sku_v2 di SolMidTerm-ALL).
+@dataclass
+class MatchingContext:
+    """Stato condiviso del matching: matrice dati, indici mesi, dati SKU pre-estratti.
+
+    Prodotto da _build_matching_context() e consumato da _compute_run_demands_for_sku().
+    Possiede l'eventuale memmap su disco: chiamare cleanup() a fine uso.
     """
-    log.info("MATCHING SKU V2 (ULTRA-OPTIMIZED)")
-    log.info("Memoria iniziale: %.1f MB", get_memory_usage_mb())
+    sku_ids: list
+    sku_data_list: list
+    data_matrix: object
+    month_col_indices: dict
+    month_prefixes: list
+    norm_arrays: dict
+    category_maps: dict
+    column_mapping: dict
+    n_rows: int
+    n_runs: int
+    df_no_lt: "pd.DataFrame"
+    _memmap_path: object = None
 
+    def cleanup(self):
+        if self._memmap_path is not None:
+            try:
+                del self.data_matrix
+                os.remove(self._memmap_path)
+                log.info("File memmap temporaneo rimosso: %s", self._memmap_path)
+            except Exception:
+                pass
+            self._memmap_path = None
+
+
+def _build_matching_context(sku_catalog, lead_times, simulation_output,
+                            column_mapping, n_runs):
+    """Costruisce lo stato di matching (STEP 1-3 di match_skus_ultra_optimized).
+
+    Sposta qui, INVARIATO, il corpo della preparazione dell'originale:
+    pre-normalizzazione, category_maps/norm_arrays, costruzione data_matrix
+    (con fallback memmap), month_col_indices, df_no_lt, sku_ids/sku_data_list
+    (con espansione multi-modello). Ritorna un MatchingContext.
+    """
+    # --- INIZIO blocco spostato da match_skus_ultra_optimized ---
     # STEP 1: Pre-normalizza colonne simulazione
     normalized_df, norm_arrays_raw = prenormalize_simulation_output_fast(
         simulation_output, column_mapping
@@ -1602,8 +1624,6 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
     sku_with_lt['Quantity_Per_Bike'] = sku_with_lt['Quantity_Per_Bike'].fillna(1.0)
 
     sku_groups = sku_with_lt.groupby('SKU')
-    n_sku_groups = len(sku_groups)
-    log.info("SKU da processare: %d", n_sku_groups)
 
     # Identifica la colonna Model nel mapping (per espansione multi-modello)
     model_sku_col = next((c for c in column_mapping if c.lower().strip() == 'model'), None)
@@ -1646,44 +1666,79 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
             'lead_time_raw': sku_rows_group['Lead_Time_Months'].iloc[0]
                              if 'Lead_Time_Months' in sku_rows_group.columns else np.nan
         })
+    # --- FINE blocco spostato ---
 
-    # STEP 4: Processing loop (identico a V1)
-    log.info("[MATCHING] Elaborazione %d SKU...", n_sku_groups)
+    return MatchingContext(
+        sku_ids=sku_ids, sku_data_list=sku_data_list, data_matrix=data_matrix,
+        month_col_indices=month_col_indices, month_prefixes=month_prefixes,
+        norm_arrays=norm_arrays, category_maps=category_maps,
+        column_mapping=column_mapping, n_rows=n_rows, n_runs=n_runs,
+        df_no_lt=df_no_lt, _memmap_path=_memmap_path,
+    )
+
+
+def _compute_run_demands_for_sku(sku_data, ctx):
+    """Calcola (run_demands[n_runs], matching_indices) per uno SKU.
+
+    Sposta qui, INVARIATO, il core del loop dell'originale.
+    run_demands è in BICI (non moltiplicato per qty).
+    """
+    combined_mask = np.zeros(ctx.n_rows, dtype=bool)
+    for row_values in sku_data['values']:
+        row_mask = sku_matches_combination_numpy(
+            row_values, ctx.norm_arrays, ctx.category_maps, ctx.column_mapping, ctx.n_rows
+        )
+        combined_mask |= row_mask
+    matching_indices = np.where(combined_mask)[0]
+    if len(matching_indices) == 0:
+        return np.zeros(ctx.n_runs, dtype=np.float32), matching_indices
+    run_demands = aggregate_monthly_demands_numpy(
+        matching_indices, ctx.data_matrix, ctx.month_col_indices,
+        sku_data['lead_time'], ctx.n_runs
+    )
+    return run_demands, matching_indices
+
+
+def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
+                               lead_times: pd.DataFrame,
+                               simulation_output: pd.DataFrame,
+                               column_mapping: Dict[str, str],
+                               n_runs: int,
+                               percentile: int = 99) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Esegue il matching SKU vs configurazioni MC e calcola statistiche.
+
+    Pre-normalizza l'output simulazione, costruisce la matrice numpy int16
+    (con fallback memmap per dataset > 4 GB), prepara le righe SKU espandendo
+    eventuali modelli combinati (es. 'MSV4+MSV4S' -> entries separate) e per
+    ogni SKU aggrega la domanda dei mesi di lead time e produce statistiche
+    aggregate e mensili (mean, std, percentile, safety stock).
+
+    Returns:
+        (df_results, df_no_lt) — df_results = SKU con statistiche/safety stock;
+        df_no_lt = SKU esclusi perche' senza lead time utile (LT mancante o <= 0),
+        con colonna 'Motivo' (replica main_sku_v2 di SolMidTerm-ALL).
+    """
+    log.info("MATCHING SKU V2 (ULTRA-OPTIMIZED)")
+    log.info("Memoria iniziale: %.1f MB", get_memory_usage_mb())
+
+    ctx = _build_matching_context(sku_catalog, lead_times, simulation_output,
+                                  column_mapping, n_runs)
+    log.info("SKU da processare: %d", len(ctx.sku_ids))
 
     start_time = time.time()
     all_results = []
-
-    for sku_idx, (sku_id, sku_data) in enumerate(zip(sku_ids, sku_data_list)):
-        if sku_idx % 500 == 0 and sku_idx > 0:
-            elapsed = time.time() - start_time
-            rate = sku_idx / elapsed
-            remaining = (n_sku_groups - sku_idx) / rate if rate > 0 else 0
-            log.info("[%d/%d] %.1f SKU/s, ETA: %.1fmin",
-                     sku_idx, n_sku_groups, rate, remaining / 60)
-
-        combined_mask = np.zeros(n_rows, dtype=bool)
-        for row_values in sku_data['values']:
-            row_mask = sku_matches_combination_numpy(
-                row_values, norm_arrays, category_maps, column_mapping, n_rows
-            )
-            combined_mask |= row_mask
-
-        matching_indices = np.where(combined_mask)[0]
+    for sku_idx, (sku_id, sku_data) in enumerate(zip(ctx.sku_ids, ctx.sku_data_list)):
+        run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
         if len(matching_indices) == 0:
             continue
-
-        run_demands = aggregate_monthly_demands_numpy(
-            matching_indices, data_matrix, month_col_indices,
-            sku_data['lead_time'], n_runs
-        )
         stats = calculate_statistics(run_demands, percentile=percentile)
 
         monthly_stats = {}
-        for month_idx, prefix in enumerate(month_prefixes):
-            col_indices_month = month_col_indices.get(month_idx, [])
+        for month_idx, prefix in enumerate(ctx.month_prefixes):
+            col_indices_month = ctx.month_col_indices.get(month_idx, [])
             if not col_indices_month:
                 continue
-            month_data = data_matrix[np.ix_(matching_indices, col_indices_month)]
+            month_data = ctx.data_matrix[np.ix_(matching_indices, col_indices_month)]
             run_demands_month = month_data.sum(axis=0).astype(np.int32)
             monthly_stats[prefix] = calculate_statistics(run_demands_month,
                                                           percentile=percentile)
@@ -1706,20 +1761,7 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
         if sku_idx % 1000 == 0:
             gc.collect()
 
-    elapsed = time.time() - start_time
-    rate = len(all_results) / elapsed if elapsed > 0 else 0
-    log.info("[OK] Matching V2 completato!")
-    log.info("Tempo: %.1fs (%.1fmin)", elapsed, elapsed / 60)
-    log.info("Velocita': %.1f SKU/s", rate)
     log.info("SKU con match: %d", len(all_results))
-
-    # Cleanup file memmap temporaneo (se usato)
-    if _memmap_path is not None:
-        del data_matrix
-        try:
-            os.remove(_memmap_path)
-            log.info("File memmap temporaneo rimosso: %s", _memmap_path)
-        except Exception:
-            pass
-
+    df_no_lt = ctx.df_no_lt
+    ctx.cleanup()
     return pd.DataFrame(all_results), df_no_lt
