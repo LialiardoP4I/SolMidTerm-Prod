@@ -22,12 +22,12 @@ I risultati vengono aggregati in un DataFrame wide pronto per lo SKU matching.
 
 import numpy as np
 import pandas as pd
-from mid_term.tr import (
+from mid_term_supermodels.tr import (
     parse_tr_file, load_monthly_tr, get_tr_for_month,
     ModelMix, CharacteristicGroup, canonical_model_name,
 )
-from mid_term._logging import get_logger
-from mid_term.exceptions import SimulationError
+from mid_term_supermodels._logging import get_logger
+from mid_term_supermodels.exceptions import SimulationError
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from collections import defaultdict
@@ -1411,7 +1411,7 @@ def rescale_alphas(model_mix, characteristics, monthly_tr,
     import copy
     if aff_map is None:
         try:
-            from mid_term.tr import _AFFIDABILITA_MAP
+            from mid_term_supermodels.tr import _AFFIDABILITA_MAP
             aff_map = {k: float(v) for k, v in _AFFIDABILITA_MAP.items()}
         except Exception:
             aff_map = {"NULLA": 50.0, "BASSA": 200.0, "MEDIA": 1000.0, "ALTA": 5000.0}

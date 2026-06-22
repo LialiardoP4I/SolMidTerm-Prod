@@ -1,5 +1,5 @@
 from tests._fixtures import tiny_simulation_output, tiny_sku_catalog, tiny_lead_times
-import matching
+from mid_term_supermodels import matching
 
 
 def test_preserve_run_vectors_returns_bike_demand():

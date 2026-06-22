@@ -1,5 +1,5 @@
 import numpy as np
-import matching
+from mid_term_supermodels import matching
 
 
 def test_pooling_sumproduct_and_risk_pooling():

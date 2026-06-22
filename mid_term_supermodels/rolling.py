@@ -33,18 +33,18 @@ from pathlib import Path
 
 import pandas as pd
 
-from mid_term._logging import get_logger
-from mid_term.config import PipelineConfig, SimulationConfig
-from mid_term.results import TRData
-from mid_term.pipeline import SafetyStockPipeline
-from mid_term.tr import load_monthly_tr, parse_tr_file
-from mid_term.montecarlo import (
+from mid_term_supermodels._logging import get_logger
+from mid_term_supermodels.config import PipelineConfig, SimulationConfig
+from mid_term_supermodels.results import TRData
+from mid_term_supermodels.pipeline import SafetyStockPipeline
+from mid_term_supermodels.tr import load_monthly_tr, parse_tr_file
+from mid_term_supermodels.montecarlo import (
     load_monthly_forecast,
     calculate_n_months_needed,
     parse_exclusions,
     rescale_alphas,
 )
-from mid_term.matching import (
+from mid_term_supermodels.matching import (
     save_results_monthly,
     load_lead_times,
     build_column_mapping_auto,

@@ -22,13 +22,13 @@ from pathlib import Path
 PKG = Path(__file__).resolve().parent       # = .../mid_term  (codice + dati + output)
 REPO = PKG.parent                            # root repo (parent del package)
 
-sys.path.insert(0, str(REPO))               # per "import mid_term"
+sys.path.insert(0, str(REPO))               # per "import mid_term_supermodels"
 sys.path.insert(0, str(PKG))                # per import interni del package (from config import ...)
 os.chdir(PKG)                               # CWD = mid_term -> path hardcoded .\Input risolvono qui
 
-from mid_term import SafetyStockPipeline, PipelineConfig
-from mid_term.config import load_simulation_config
-from mid_term.montecarlo import load_monthly_forecast
+from mid_term_supermodels import SafetyStockPipeline, PipelineConfig
+from mid_term_supermodels.config import load_simulation_config
+from mid_term_supermodels.montecarlo import load_monthly_forecast
 
 JSON_PATH = PKG / "run_config.json"
 

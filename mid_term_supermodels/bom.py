@@ -27,8 +27,8 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-from mid_term._logging import get_logger
-from mid_term.exceptions import BOMParseError, InputFileError
+from mid_term_supermodels._logging import get_logger
+from mid_term_supermodels.exceptions import BOMParseError, InputFileError
 log = get_logger("bom")
 
 # ============================================================================
@@ -65,7 +65,7 @@ def load_calculated_cols_from_tr(tr_file: str) -> List[Tuple[str, str, str, Opti
     xl = pd.ExcelFile(tr_file)
     sheets = xl.sheet_names
 
-    from mid_term.tr import _parse_month_str as _pms
+    from mid_term_supermodels.tr import _parse_month_str as _pms
     opt_sheets = sorted(
         [s for s in sheets if s.lower().startswith('tr_optional_')],
         key=lambda s: _pms(s[len('tr_optional_'):])  # ordine CRONOLOGICO (coerente con tr_parser_V2)
@@ -147,7 +147,7 @@ def load_priority_order_from_tr(tr_file: str, group_prefix: str) -> List[str]:
     """
     xl = pd.ExcelFile(tr_file)
     sheets = xl.sheet_names
-    from mid_term.tr import _parse_month_str as _pms
+    from mid_term_supermodels.tr import _parse_month_str as _pms
     opt_sheets = sorted(
         [s for s in sheets if s.lower().startswith('tr_optional_')],
         key=lambda s: _pms(s[len('tr_optional_'):])  # ordine CRONOLOGICO (coerente con tr_parser_V2)
@@ -786,7 +786,7 @@ def _build_tr_char_options(tr_file: str) -> Dict[str, List[str]]:
         xl = pd.ExcelFile(tr_file)
         sheets = xl.sheet_names
 
-        from mid_term.tr import _parse_month_str as _pms
+        from mid_term_supermodels.tr import _parse_month_str as _pms
         opt_sheets = sorted(
             [s for s in sheets if s.lower().startswith('tr_optional_')],
             key=lambda s: _pms(s[len('tr_optional_'):])
@@ -883,7 +883,7 @@ def _build_active_cv_sets(tr_file: str, mapping_df: pd.DataFrame) -> Dict[str, S
     In caso di errore ritorna {} -> filtro disabilitato, comportamento invariato.
     """
     try:
-        from mid_term.tr import parse_tr_file
+        from mid_term_supermodels.tr import parse_tr_file
 
         _, characteristics = parse_tr_file(tr_file)
 

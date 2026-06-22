@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from mid_term.exceptions import ConfigurationError
+from mid_term_supermodels.exceptions import ConfigurationError
 
 
 @dataclass(frozen=True)
@@ -114,7 +114,7 @@ def load_simulation_config(json_path, forecast_month_names) -> "SimulationConfig
 
     Solleva ConfigurationError con messaggio chiaro su qualunque problema.
     """
-    from mid_term.tr import _AFFIDABILITA_MAP   # lazy: evita import cycle
+    from mid_term_supermodels.tr import _AFFIDABILITA_MAP   # lazy: evita import cycle
 
     p = Path(json_path)
     if not p.is_file():

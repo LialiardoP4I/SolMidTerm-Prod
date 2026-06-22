@@ -6,6 +6,13 @@ PKG = Path(__file__).resolve().parent.parent
 if str(PKG) not in sys.path:
     sys.path.insert(0, str(PKG))
 
+# Il package e' ora self-contained e si importa come `mid_term_supermodels`:
+# serve anche la cartella PADRE (SolMidTerm - Prod) su sys.path affinche'
+# `import mid_term_supermodels` (e i suoi sotto-moduli) risolva.
+PARENT = PKG.parent
+if str(PARENT) not in sys.path:
+    sys.path.insert(0, str(PARENT))
+
 # Il package usa import assoluti `from mid_term...`, quindi anche la cartella
 # genitore (SolMidTerm - Prod) finisce su sys.path e contiene un suo pacchetto
 # `tests/` che maschererebbe questo. Forziamo la risoluzione del pacchetto

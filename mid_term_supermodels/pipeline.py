@@ -21,12 +21,12 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from mid_term._logging import get_logger
-from mid_term.config import PipelineConfig, SimulationConfig
-from mid_term.results import (TRData, BOMData, SimulationResult,
+from mid_term_supermodels._logging import get_logger
+from mid_term_supermodels.config import PipelineConfig, SimulationConfig
+from mid_term_supermodels.results import (TRData, BOMData, SimulationResult,
                                MatchResult, SafetyStockResult)
-from mid_term.tr import load_monthly_tr, parse_tr_file
-from mid_term.bom import (
+from mid_term_supermodels.tr import load_monthly_tr, parse_tr_file
+from mid_term_supermodels.bom import (
     process_combination,
     consolidate_results,
     run_quality_checks,
@@ -35,8 +35,9 @@ from mid_term.bom import (
     get_available_models,
     OUTPUT_DIR as BOM_OUTPUT_DIR,
 )
-from mid_term.matching import (
+from mid_term_supermodels.matching import (
     match_skus_ultra_optimized,
+    match_skus_preserve_run_vectors,
     build_column_mapping_auto,
     build_solo_modello_flags,
     load_lead_times,
@@ -47,7 +48,7 @@ from mid_term.matching import (
     save_results_monthly,
     CambioValutaError,
 )
-from mid_term.montecarlo import (
+from mid_term_supermodels.montecarlo import (
     SimulationConfig as MCSimulationConfig,
     run_monthly_simulations_optimized,
     build_wide_dataframe,
@@ -549,17 +550,15 @@ class SafetyStockPipeline:
         finale match_skus_ultra_optimized con match_skus_preserve_run_vectors, che
         restituisce i vettori di domanda per-run (in bici) anziche' le statistiche.
 
-        NOTA import: usa `import matching` (non `from mid_term.matching import ...`)
-        cosi' risolve sul package COPIATO (mid_term_supermodels/matching.py), l'unico
-        che espone match_skus_preserve_run_vectors. Gli altri helper (load_lead_times,
-        build_solo_modello_flags, _reinit_norm_cache, build_column_mapping_auto) sono
-        invariati rispetto all'originale: si riusano dagli import a livello modulo.
+        NOTA import: match_skus_preserve_run_vectors arriva dall'import a livello
+        modulo `from mid_term_supermodels.matching import ...` (package COPIATO,
+        l'unico che la espone). Idem gli altri helper (load_lead_times,
+        build_solo_modello_flags, _reinit_norm_cache, build_column_mapping_auto):
+        tutti risolti sul package self-contained mid_term_supermodels.
 
         Returns:
             ( { sku : (run_demands_bici[n_runs], qty, lead_time) }, df_no_lt )
         """
-        import matching  # package copiato: espone match_skus_preserve_run_vectors
-
         tr  = self.run_step_0_load_tr()
         _bom = self.run_step_1_build_bom()
         sim = self.run_step_2_montecarlo(tr)
@@ -619,7 +618,7 @@ class SafetyStockPipeline:
 
         # 7. Matching che PRESERVA i vettori per-run (al posto di
         #    match_skus_ultra_optimized): stessi input di run_step_3_matching.
-        vectors, df_no_lt = matching.match_skus_preserve_run_vectors(
+        vectors, df_no_lt = match_skus_preserve_run_vectors(
             sku_catalog=sku_catalog,
             lead_times=lead_times,
             simulation_output=simulation_output,

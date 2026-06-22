@@ -11,7 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import List
 
-from _logging import get_logger
+from mid_term_supermodels._logging import get_logger
 
 log = get_logger(__name__)
 
@@ -55,7 +55,7 @@ def _make_result(per_sku_pooled, per_supermodel_breakdown, output_paths,
     degrada a un namedtuple locale con gli stessi campi.
     """
     try:
-        from results import MultiSupermodelResult  # package copiato (Task 7)
+        from mid_term_supermodels.results import MultiSupermodelResult  # package copiato (Task 7)
         return MultiSupermodelResult(
             per_sku_pooled=per_sku_pooled,
             per_supermodel_breakdown=per_supermodel_breakdown,
@@ -99,10 +99,10 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
         MultiSupermodelResult (o fallback namedtuple) con campi
         per_sku_pooled, per_supermodel_breakdown, output_paths, elapsed_seconds.
     """
-    import matching  # package copiato: pool_safety_stock + preserve_run_vectors
-    from config import PipelineConfig, load_simulation_config
-    from montecarlo import load_monthly_forecast
-    from pipeline import SafetyStockPipeline
+    from mid_term_supermodels import matching  # package copiato: pool_safety_stock + preserve_run_vectors
+    from mid_term_supermodels.config import PipelineConfig, load_simulation_config
+    from mid_term_supermodels.montecarlo import load_monthly_forecast
+    from mid_term_supermodels.pipeline import SafetyStockPipeline
 
     t0 = time.time()
 

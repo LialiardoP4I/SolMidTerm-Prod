@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
-from mid_term._logging import get_logger
+from mid_term_supermodels._logging import get_logger
 
 log = get_logger("tr")
 

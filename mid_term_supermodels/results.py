@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple, TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from mid_term.tr import ModelMix, CharacteristicGroup
+    from mid_term_supermodels.tr import ModelMix, CharacteristicGroup
 
 
 @dataclass

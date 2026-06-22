@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-import multi_supermodel
+from mid_term_supermodels import multi_supermodel
 
 
 def test_discover_supermodels(tmp_path):

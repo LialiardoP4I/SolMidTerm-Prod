@@ -32,9 +32,9 @@ import os
 import tempfile
 import warnings
 
-from mid_term.tr import canonical_model_name
-from mid_term._logging import get_logger
-from mid_term.exceptions import MatchingError
+from mid_term_supermodels.tr import canonical_model_name
+from mid_term_supermodels._logging import get_logger
+from mid_term_supermodels.exceptions import MatchingError
 
 log = get_logger("matching")
 

@@ -9,8 +9,8 @@ API pubblica:
     PipelineConfig, SimulationConfig — configurazione (percorsi file e parametri)
     Eccezioni: MidTermError + sotto-classi specifiche per ogni step
 """
-from mid_term.config import PipelineConfig, SimulationConfig
-from mid_term.exceptions import (
+from mid_term_supermodels.config import PipelineConfig, SimulationConfig
+from mid_term_supermodels.exceptions import (
     MidTermError,
     ConfigurationError,
     InputFileError,
@@ -19,7 +19,7 @@ from mid_term.exceptions import (
     SimulationError,
     MatchingError,
 )
-from mid_term.tr import (
+from mid_term_supermodels.tr import (
     canonical_model_name,
     ModelMix,
     CharacteristicGroup,
@@ -28,7 +28,7 @@ from mid_term.tr import (
     load_monthly_tr,
     get_tr_for_month,
 )
-from mid_term.bom import (
+from mid_term_supermodels.bom import (
     process_excel_to_matrix_v2,
     crea_tutte_righe_univoche_v2,
     process_combination,
@@ -36,7 +36,7 @@ from mid_term.bom import (
     build_unified_mapping,
     consolidate_results,
 )
-from mid_term.montecarlo import (
+from mid_term_supermodels.montecarlo import (
     run_monthly_simulations_optimized,
     run_single_month_simulation_optimized,
     build_wide_dataframe,
@@ -47,15 +47,15 @@ from mid_term.montecarlo import (
     calculate_n_months_needed,
     parse_exclusions,
 )
-from mid_term.matching import (
+from mid_term_supermodels.matching import (
     match_skus_ultra_optimized,
     NormalizationCache,
     normalize_value_cached,
     build_column_mapping_auto,
     load_lead_times,
 )
-from mid_term.pipeline import SafetyStockPipeline
-from mid_term.results import (
+from mid_term_supermodels.pipeline import SafetyStockPipeline
+from mid_term_supermodels.results import (
     TRData,
     BOMData,
     SimulationResult,

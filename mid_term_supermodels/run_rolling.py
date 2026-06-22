@@ -23,10 +23,10 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(PKG))
 os.chdir(PKG)
 
-from mid_term import PipelineConfig
-from mid_term.config import load_simulation_config
-from mid_term.montecarlo import load_monthly_forecast
-from mid_term.rolling import run_rolling
+from mid_term_supermodels import PipelineConfig
+from mid_term_supermodels.config import load_simulation_config
+from mid_term_supermodels.montecarlo import load_monthly_forecast
+from mid_term_supermodels.rolling import run_rolling
 
 JSON_PATH = PKG / "run_config.json"
 

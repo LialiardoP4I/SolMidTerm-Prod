@@ -1,5 +1,5 @@
 import pytest
-import multi_supermodel
+from mid_term_supermodels import multi_supermodel
 
 
 def test_run_multi_supermodel_raises_on_empty(tmp_path):

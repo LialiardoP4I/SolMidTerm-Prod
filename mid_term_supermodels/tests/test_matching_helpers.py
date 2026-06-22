@@ -1,6 +1,6 @@
 import numpy as np
 from tests._fixtures import tiny_simulation_output, tiny_sku_catalog, tiny_lead_times
-import matching
+from mid_term_supermodels import matching
 
 
 def test_build_context_and_run_demands():

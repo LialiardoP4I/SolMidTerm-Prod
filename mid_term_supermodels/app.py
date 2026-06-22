@@ -47,11 +47,11 @@ st.set_page_config(
 )
 
 # Import del package DOPO il chdir (la discovery modelli legge .\Input\MODEL a import-time)
-from mid_term import SafetyStockPipeline, PipelineConfig, SimulationConfig
-from mid_term.results import BOMData
-from mid_term.montecarlo import load_monthly_forecast
+from mid_term_supermodels import SafetyStockPipeline, PipelineConfig, SimulationConfig
+from mid_term_supermodels.results import BOMData
+from mid_term_supermodels.montecarlo import load_monthly_forecast
 try:
-    from mid_term.tr import _AFFIDABILITA_MAP
+    from mid_term_supermodels.tr import _AFFIDABILITA_MAP
     AFF_LEVELS = sorted(_AFFIDABILITA_MAP, key=_AFFIDABILITA_MAP.get)
 except Exception:
     AFF_LEVELS = ["NULLA", "BASSA", "MEDIA", "ALTA"]
