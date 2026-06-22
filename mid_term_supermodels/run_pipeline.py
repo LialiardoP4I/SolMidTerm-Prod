@@ -15,6 +15,7 @@ Tutti i riferimenti stanno sotto mid_term/:
 NOTA: il package usa path hardcoded relativi (.\\Input\\...). Il launcher fa
 os.chdir(PKG) così risolvono tutti sotto mid_term/.
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -46,6 +47,20 @@ def main():
 
     # Parametri simulazione dal JSON (obbligatorio e completo, fail-fast)
     sim_config = load_simulation_config(JSON_PATH, month_names)
+
+    # Ramo opt-in multi-supermodel (default false = comportamento classico)
+    with open(JSON_PATH, encoding='utf-8') as _f:
+        _cfg_raw = json.load(_f)
+    if _cfg_raw.get('multi_supermodel', False):
+        from mid_term_supermodels.multi_supermodel import run_multi_supermodel
+        result = run_multi_supermodel(
+            input_dir=str(config.input_dir),
+            output_dir=str(config.output_dir),
+            json_path=str(JSON_PATH),
+            seed_base=_cfg_raw.get('random_seed', 42),
+        )
+        print(f"[multi-supermodel] pooled output: {result.output_paths}")
+        return result
 
     pipeline = SafetyStockPipeline(config, sim_config, validate_config=False)
     result = pipeline.run()
