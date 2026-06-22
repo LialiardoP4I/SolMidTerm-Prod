@@ -69,3 +69,12 @@ class SafetyStockResult:
     percentile:      int
     output_paths:    Dict[str, str] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
+
+
+@dataclass
+class MultiSupermodelResult:
+    """Output orchestratore multi-supermodel: pooling SS tra modelli."""
+    per_sku_pooled:           pd.DataFrame
+    per_supermodel_breakdown: dict
+    output_paths:             Dict[str, str] = field(default_factory=dict)
+    elapsed_seconds:          float = 0.0

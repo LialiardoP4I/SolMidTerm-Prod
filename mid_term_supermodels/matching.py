@@ -1462,6 +1462,29 @@ def save_results_monthly(results_df: pd.DataFrame,
     return df_monthly
 
 
+def save_results_pooled(df_pool, filename, percentile=99):
+    """Scrive l'output pooled multi-supermodel su Excel.
+
+    Ordina per safety_stock pooled decrescente (componenti più critici in cima).
+
+    Args:
+        df_pool:    DataFrame pooled dal pool_safety_stock()
+        filename:   Path file output Excel
+        percentile: Percentile usato per la safety stock (default 99)
+
+    Returns:
+        DataFrame ordinato (lo stesso salvato su file)
+    """
+    ss_pooled = f'safety_stock_p{percentile}_pooled'
+    df_out = df_pool.copy()
+    if ss_pooled in df_out.columns:
+        df_out = df_out.sort_values(ss_pooled, ascending=False)
+    with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+        df_out.to_excel(writer, index=False, sheet_name='SS_pooled')
+    log.info("Output pooled salvato: %s (%d componenti)", filename, len(df_out))
+    return df_out
+
+
 from dataclasses import dataclass, field
 
 

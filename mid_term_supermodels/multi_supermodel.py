@@ -154,9 +154,14 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
     log.info("Pooling completato: %d componenti, %.1fs",
              len(df_pool) if df_pool is not None else 0, elapsed)
 
+    # Salva il risultato pooled su Excel (Task 7)
+    out_path = os.path.join(output_dir, 'sku_safety_stock_POOLED_supermodels.xlsx')
+    os.makedirs(output_dir, exist_ok=True)
+    matching.save_results_pooled(df_pool, out_path, percentile=percentile)
+
     return _make_result(
         per_sku_pooled=df_pool,
         per_supermodel_breakdown=breakdown,
-        output_paths={},
+        output_paths={'pooled': out_path},
         elapsed_seconds=elapsed,
     )
