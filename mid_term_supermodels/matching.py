@@ -1792,3 +1792,77 @@ def match_skus_preserve_run_vectors(sku_catalog, lead_times, simulation_output,
     ctx.cleanup()
     log.info("Vettori per-run raccolti: %d SKU", len(vectors))
     return vectors, df_no_lt
+
+
+def pool_safety_stock(supermodel_results, percentile=99, n_runs=None):
+    """Pool per-run delle domande dei componenti tra supermodel (somma-prodotto).
+
+    Args:
+        supermodel_results: { supermodel : { sku : (run_demands_bici[n_runs], qty, lead_time) } }
+        percentile: percentile per la safety stock (default 99).
+        n_runs: lunghezza attesa dei vettori (se None, dedotta dal primo vettore).
+
+    Returns:
+        (df_per_sku_pooled, breakdown_dict)
+        df_per_sku_pooled: una riga per componente con SS pooled + colonne breakdown.
+        breakdown_dict: { sku : { supermodel : {mean, ss_standalone, qty, lead_time} } }
+    """
+    ss_key = f'safety_stock_p{percentile}'
+    supermodels = list(supermodel_results.keys())
+
+    # Deduci n_runs
+    if n_runs is None:
+        for sm in supermodels:
+            for _sku, (rd, _q, _lt) in supermodel_results[sm].items():
+                n_runs = len(rd)
+                break
+            if n_runs:
+                break
+    if not n_runs:
+        return pd.DataFrame(), {}
+
+    # Unione di tutti i codici componente
+    all_skus = set()
+    for sm in supermodels:
+        all_skus.update(supermodel_results[sm].keys())
+
+    rows = []
+    breakdown = {}
+    for sku in sorted(all_skus):
+        pooled = np.zeros(n_runs, dtype=np.float64)
+        row = {'SKU': sku}
+        breakdown[sku] = {}
+        sum_standalone_ss = 0.0
+        lead_times_seen = []
+        for sm in supermodels:
+            entry = supermodel_results[sm].get(sku)
+            if entry is None:
+                row[f'mean_demand_{sm}'] = 0.0
+                row[f'{ss_key}_standalone_{sm}'] = 0.0
+                continue
+            run_demands, qty, lead_time = entry
+            pezzi_sm = np.asarray(run_demands, dtype=np.float64) * qty
+            pooled += pezzi_sm
+            lead_times_seen.append(lead_time)
+
+            mean_sm = float(pezzi_sm.mean())
+            p_sm = float(np.percentile(pezzi_sm, percentile))
+            ss_sm = max(0.0, p_sm - mean_sm)
+            sum_standalone_ss += ss_sm
+
+            row[f'mean_demand_{sm}'] = round(mean_sm, 4)
+            row[f'{ss_key}_standalone_{sm}'] = round(ss_sm, 4)
+            breakdown[sku][sm] = {'mean': mean_sm, 'ss_standalone': ss_sm,
+                                  'qty': qty, 'lead_time': lead_time}
+
+        mean_pooled = float(pooled.mean())
+        p_pooled = float(np.percentile(pooled, percentile))
+        ss_pooled = max(0.0, p_pooled - mean_pooled)
+
+        row['mean_demand_pooled'] = round(mean_pooled, 4)
+        row[f'{ss_key}_pooled'] = round(ss_pooled, 4)
+        row['risk_pooling_saving'] = round(sum_standalone_ss - ss_pooled, 4)
+        row['Lead_Time_max'] = round(max(lead_times_seen), 4) if lead_times_seen else 0.0
+        rows.append(row)
+
+    return pd.DataFrame(rows), breakdown
