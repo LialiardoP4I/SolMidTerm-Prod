@@ -305,12 +305,14 @@ def calcola_residual_lead_time(input_dir: str = '.\\Input',
 
     # 8. Carica Dashboard + Prezzi
     log.info("[RESIDUAL_LT V3] Carica Dashboard + Prezzi...")
-    prezzi_files = sorted(logistica_path.glob("PREZZI*.XLS*"))
+    # PREZZI ora e' PER-SUPERMODEL: cerca prima nella input_path del supermodel,
+    # fallback alla Dati Logistica condivisa (logistica_path) solo se assente.
+    prezzi_files = sorted(input_path.glob("PREZZI*.XLS*"))
     if not prezzi_files:
-        prezzi_files = sorted(input_path.glob("PREZZI*.XLS*"))
+        prezzi_files = sorted(logistica_path.glob("PREZZI*.XLS*"))
     if not prezzi_files:
         raise FileNotFoundError(
-            f"Nessun file PREZZI trovato in: {logistica_path} o {input_path}"
+            f"Nessun file PREZZI trovato in: {input_path} o {logistica_path}"
         )
     prezzi_path_found = prezzi_files[-1]
     log.info("Prezzi: %s", prezzi_path_found.name)

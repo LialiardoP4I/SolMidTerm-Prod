@@ -35,7 +35,7 @@ class PipelineConfig:
     input_dir:  Path
     output_dir: Path
 
-    tr_file:         str = "TR TOTALV21E - Copia.xlsx"
+    tr_file:         str = "TR.xlsx"
     mapping_file:    str = "Mappatura_Unificata.xlsx"
     forecast_file:   str = "Total_demand.xlsx"
     exclusions_file: str = "esclusioni.xlsx"
