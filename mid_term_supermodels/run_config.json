@@ -6,5 +6,6 @@
   "affidabilita_model": "ALTA",
   "affidabilita_optional": "BASSA",
   "gate_max_mesi": 4,
-  "multi_supermodel": false
+  "multi_supermodel": true,
+  "rolling": false
 }

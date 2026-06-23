@@ -4,6 +4,8 @@
 Esegue la pipeline SS per ogni cartella supermodel (domanda + TR propri,
 seed diverso) e fa il pooling dei vettori per-run a livello componente.
 """
+import dataclasses
+import json
 import os
 import shutil
 import time
@@ -13,6 +15,10 @@ from pathlib import Path
 from typing import List
 
 from mid_term_supermodels._logging import get_logger
+# Importati a livello modulo cosi' sono monkeypatchabili nei test
+# (multi_supermodel.load_monthly_forecast / .collect_run_vectors_rolling).
+from mid_term_supermodels.montecarlo import load_monthly_forecast
+from mid_term_supermodels.rolling import collect_run_vectors_rolling
 
 log = get_logger(__name__)
 
@@ -249,3 +255,199 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
         output_paths={'pooled': out_path},
         elapsed_seconds=elapsed,
     )
+
+
+def _build_sim_config_for_supermodel(json_path, month_names, k, seed_base):
+    """Costruisce la SimulationConfig per UN supermodel in modalita' rolling.
+
+    Problema: load_simulation_config valida start_month (dal JSON) contro i
+    nomi-mese del forecast. In rolling ogni supermodel ha un orizzonte (e quindi
+    nomi-mese) diversi, per cui lo start_month del JSON puo' NON esistere in un
+    certo supermodel -> ConfigurationError. Ma il rolling IGNORA start_month e
+    itera da offset 0 (vedi docstring di collect_run_vectors_rolling), quindi
+    l'unica cosa che serve davvero qui e' ottenere una SimulationConfig valida
+    con n_runs/percentile/affidabilita/gate_max_mesi corretti e offset = 0.
+
+    Strategia (senza MAI mutare il file JSON):
+      1) prova load_simulation_config(json_path, month_names) normalmente;
+      2) se solleva ConfigurationError perche' lo start_month non e' nei
+         month_names del supermodel, rilegge lo start_month dal JSON grezzo e
+         ritenta passando [start_month] + month_names cosi' la validazione passa
+         (l'offset risultante e' irrilevante: viene azzerato sotto).
+    In ogni caso forza start_month_offset=0 e random_seed = seed_base + k.
+    """
+    from mid_term_supermodels.config import load_simulation_config
+    from mid_term_supermodels.exceptions import ConfigurationError
+
+    try:
+        sim_config = load_simulation_config(json_path, month_names)
+    except ConfigurationError as e:
+        # Fallback robusto: start_month del JSON assente in questo supermodel.
+        try:
+            raw = json.loads(Path(json_path).read_text(encoding="utf-8"))
+            start_month = raw.get("start_month")
+        except Exception:
+            start_month = None
+        if not start_month:
+            raise
+        log.warning(
+            "load_simulation_config fallita per il supermodel #%d (%s): "
+            "start_month '%s' non presente nei mesi del forecast. "
+            "Rolling itera da offset 0: uso fallback con start_month_offset=0.",
+            k, e, start_month,
+        )
+        # month_names augmentati: garantisce che start_month sia presente.
+        sim_config = load_simulation_config(json_path, [start_month] + list(month_names))
+
+    # Rolling: offset ignorato, si itera 0..N. Seed diverso per supermodel (D8).
+    return dataclasses.replace(sim_config, start_month_offset=0,
+                               random_seed=seed_base + k)
+
+
+def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str,
+                                 seed_base: int = 42):
+    """Orchestratore multi-supermodel in modalita' ROLLING + pooling per mese.
+
+    Per ogni supermodel esegue collect_run_vectors_rolling (rolling sui mesi di
+    lancio che PRESERVA i vettori per-run per componente), poi fa il pooling
+    ALLINEATO PER MESE DI LANCIO: per ciascun mese di lancio M (unione di tutti i
+    mesi visti tra i supermodel) raccoglie i vettori dei supermodel che hanno M e
+    chiama matching.pool_safety_stock(). Il risultato e' un'unica tabella con la
+    colonna mese_lancio.
+
+    Mirroring di run_multi_supermodel per staging/chdir/cleanup: stesso schema
+    (stage -> chdir -> run -> finally chdir+rmtree della copia), ma il motore
+    per-supermodel e' il rolling al posto del run singolo.
+
+    Args:
+        input_dir:  cartella con i supermodel + i file condivisi.
+        output_dir: cartella di output (l'Excel pooled rolling vi viene scritto).
+        json_path:  JSON di run (n_runs, percentile, affidabilita', gate, ...).
+        seed_base:  seed base; il supermodel k usa seed_base + k.
+
+    Returns:
+        MultiSupermodelResult (o fallback namedtuple) con per_sku_pooled che
+        include la colonna mese_lancio.
+    """
+    from mid_term_supermodels import matching
+    from mid_term_supermodels.config import PipelineConfig
+
+    import pandas as pd
+
+    t0 = time.time()
+
+    supermodel_dirs = discover_supermodels(input_dir)
+    if not supermodel_dirs:
+        raise RuntimeError(f"Nessun supermodel trovato in {input_dir}")
+
+    shared_dir = Path(input_dir)
+    work_root = Path(input_dir).parent / '_work_supermodels'
+
+    sm_rolling = {}      # { sm_name : { mese_lancio : {'vectors', 'troncata', ...} } }
+    percentile = None
+    cwd0 = os.getcwd()
+    try:
+        for k, sm_dir in enumerate(supermodel_dirs):
+            sm_name = Path(sm_dir).name
+            seed = seed_base + k
+            log.info("=== [ROLLING] Supermodel %d/%d: %s (seed=%d) ===",
+                     k + 1, len(supermodel_dirs), sm_name, seed)
+
+            work_sm = stage_supermodel_input(sm_dir, shared_dir, work_root)
+            try:
+                os.chdir(work_sm)
+
+                config_sm = PipelineConfig(
+                    input_dir=Path('Input'),
+                    output_dir=Path(output_dir) / sm_name,
+                )
+
+                # Nomi-mese dal forecast per-supermodel (per costruire sim_config).
+                forecast_path = config_sm.resolve_input(config_sm.forecast_file)
+                _, month_names = load_monthly_forecast(str(forecast_path))
+
+                sim_config = _build_sim_config_for_supermodel(
+                    json_path, month_names, k, seed_base,
+                )
+                if percentile is None:
+                    percentile = sim_config.percentile_safety_stock
+
+                rolling_res = collect_run_vectors_rolling(config_sm, sim_config)
+                sm_rolling[sm_name] = rolling_res
+            finally:
+                os.chdir(cwd0)
+                shutil.rmtree(work_sm, ignore_errors=True)
+    finally:
+        os.chdir(cwd0)
+        shutil.rmtree(work_root, ignore_errors=True)
+
+    if percentile is None:
+        percentile = 99
+
+    # ---- Pooling allineato per mese di lancio ----
+    df_pool_rolling, per_sm_breakdown = _pool_rolling_by_month(
+        sm_rolling, percentile, matching, pd,
+    )
+
+    elapsed = time.time() - t0
+    log.info("[ROLLING] Pooling per mese completato: %d righe, %.1fs",
+             len(df_pool_rolling) if df_pool_rolling is not None else 0, elapsed)
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(
+        output_dir, 'sku_safety_stock_POOLED_rolling_supermodels.xlsx')
+    matching.save_results_pooled(df_pool_rolling, out_path, percentile=percentile)
+
+    return _make_result(
+        per_sku_pooled=df_pool_rolling,
+        per_supermodel_breakdown=per_sm_breakdown,
+        output_paths={'pooled_rolling': out_path},
+        elapsed_seconds=elapsed,
+    )
+
+
+def _pool_rolling_by_month(sm_rolling, percentile, matching, pd):
+    """Pooling cross-supermodel ALLINEATO per mese di lancio.
+
+    Args:
+        sm_rolling: { sm_name : { mese_lancio : {'vectors':..., 'troncata':bool, ...} } }
+        percentile: percentile per la safety stock.
+        matching:   modulo matching (pool_safety_stock + parse_month_to_sortable).
+        pd:         modulo pandas.
+
+    Returns:
+        (df_pool_rolling, breakdown_by_month)
+        df_pool_rolling: concat dei pooling per mese, con colonne mese_lancio
+            (posizione 0) e finestra_troncata; vuoto se nessun risultato.
+        breakdown_by_month: { mese_lancio : breakdown_dict } da pool_safety_stock.
+    """
+    supermodels = list(sm_rolling.keys())
+
+    # Unione di tutti i mesi di lancio visti tra i supermodel, ordine cronologico.
+    all_months = set()
+    for sm in supermodels:
+        all_months.update(sm_rolling[sm].keys())
+    months_sorted = sorted(all_months, key=matching.parse_month_to_sortable)
+
+    all_dfs = []
+    breakdown_by_month = {}
+    for M in months_sorted:
+        present = [sm for sm in supermodels if M in sm_rolling[sm]]
+        if not present:
+            continue
+        per_month_results = {sm: sm_rolling[sm][M]['vectors'] for sm in present}
+        df_m, bd = matching.pool_safety_stock(
+            per_month_results, percentile=percentile, n_runs=None,
+        )
+        breakdown_by_month[M] = bd
+        if df_m is None or len(df_m) == 0:
+            continue
+        troncata = any(sm_rolling[sm][M].get('troncata', False) for sm in present)
+        df_m = df_m.copy()
+        df_m.insert(0, 'mese_lancio', M)
+        df_m.insert(1, 'finestra_troncata', troncata)
+        all_dfs.append(df_m)
+
+    if not all_dfs:
+        return pd.DataFrame(), breakdown_by_month
+    return pd.concat(all_dfs, ignore_index=True), breakdown_by_month
