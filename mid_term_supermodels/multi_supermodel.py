@@ -5,6 +5,7 @@ Esegue la pipeline SS per ogni cartella supermodel (domanda + TR propri,
 seed diverso) e fa il pooling dei vettori per-run a livello componente.
 """
 import os
+import shutil
 import time
 from collections import namedtuple
 from dataclasses import replace
@@ -14,6 +15,15 @@ from typing import List
 from mid_term_supermodels._logging import get_logger
 
 log = get_logger(__name__)
+
+# File condivisi (non per-supermodel) copiati dentro lo staged Input/.
+_SHARED_FILES = (
+    "States.xlsx",
+    "esclusioni.xlsx",
+    "Cambio Valuta.xlsx",
+    "affidabilita_config.json",
+)
+_SHARED_DIRS = ("Dati Logistica",)
 
 # MultiSupermodelResult e' introdotto nel Task 7 (results.py). Finche' non
 # esiste, usiamo un namedtuple locale con gli stessi campi: l'orchestratore
@@ -27,32 +37,74 @@ _MultiSupermodelResultFallback = namedtuple(
 
 
 def discover_supermodels(input_dir: str) -> List[str]:
-    """Trova le cartelle ROOT supermodel sotto input_dir (layout opzione B).
+    """Trova le cartelle ROOT supermodel sotto input_dir (layout A-staging, flat).
 
-    Una sottocartella `sub` di input_dir è un supermodel se il suo `Input/`
-    contiene: sottocartella MODEL/, un Total_demand.xlsx e almeno un file il cui
-    nome inizia con 'TR' (.xlsx/.xls). Restituisce il path della ROOT `sub`
-    (quella in cui fare os.chdir cosi' che './Input/...' risolva ai suoi dati).
+    Una sottocartella `sub` di input_dir e' un supermodel se contiene
+    DIRETTAMENTE (non sotto `sub/Input`):
+      - una sottocartella MODEL/,
+      - un file Total_demand.xlsx,
+      - almeno un file il cui nome inizia con 'TR' (.xlsx/.xls).
 
-    La cartella condivisa 'Dati Logistica' viene esclusa naturalmente: non
-    contiene un sotto-layout Input/MODEL.
+    Restituisce il path ROOT `sub` (la cartella per-supermodel da cui lo staging
+    copiera' tutti i dati). Questo esclude naturalmente le cartelle condivise
+    ('Dati Logistica') e le cartelle sorgente grezze ('DVL', 'PANI'): non hanno
+    una sottocartella MODEL/ ne' Total_demand/TR diretti.
     """
     base = Path(input_dir)
     result = []
     for sub in sorted(base.iterdir()):
         if not sub.is_dir():
             continue
-        sm_input = sub / 'Input'
-        if not sm_input.is_dir():
-            continue
-        has_model = (sm_input / 'MODEL').is_dir()
-        has_demand = (sm_input / 'Total_demand.xlsx').exists()
+        has_model = (sub / 'MODEL').is_dir()
+        has_demand = (sub / 'Total_demand.xlsx').exists()
         has_tr = any(f.name.upper().startswith('TR') and f.suffix.lower() in ('.xlsx', '.xls')
-                     for f in sm_input.iterdir() if f.is_file())
+                     for f in sub.iterdir() if f.is_file())
         if has_model and has_demand and has_tr:
             result.append(str(sub))
     log.info("Supermodel trovati: %d", len(result))
     return result
+
+
+def stage_supermodel_input(sm_dir, shared_dir, work_root):
+    """Crea <work_root>/<SM>/Input/ con TUTTO il per-supermodel (copiato da sm_dir)
+    + i file condivisi (copiati da shared_dir). Ritorna il path <work_root>/<SM>
+    (la dir in cui fare chdir; il package vedra' ./Input/...).
+
+    Copia (shutil): l'intero contenuto di sm_dir in <work>/Input/, poi i condivisi
+    noti da shared_dir: 'States.xlsx', 'esclusioni.xlsx', 'Cambio Valuta.xlsx',
+    'affidabilita_config.json' (file) e 'Dati Logistica' (dir).
+    """
+    sm_dir = Path(sm_dir)
+    shared_dir = Path(shared_dir)
+    work_sm = Path(work_root) / sm_dir.name
+    staged_input = work_sm / 'Input'
+
+    # Clean slate: rimuovi un eventuale staging precedente (sempre sotto work_root,
+    # MAI il vero Input/ dei dati).
+    if work_sm.exists():
+        shutil.rmtree(work_sm)
+
+    # Copia l'intero contenuto per-supermodel: MODEL/, Total_demand, TR,
+    # Mappatura_Unificata, matrix_output_*, tutte_righe_* (tutto cio' che esiste).
+    shutil.copytree(sm_dir, staged_input)
+
+    # Copia i file condivisi dentro lo stesso Input/ staged.
+    for fname in _SHARED_FILES:
+        src = shared_dir / fname
+        if src.exists():
+            shutil.copy2(src, staged_input / fname)
+        else:
+            log.warning("File condiviso assente, skip: %s", src)
+
+    # Copia le dir condivise (es. 'Dati Logistica').
+    for dname in _SHARED_DIRS:
+        src = shared_dir / dname
+        if src.is_dir():
+            shutil.copytree(src, staged_input / dname)
+        else:
+            log.warning("Cartella condivisa assente, skip: %s", src)
+
+    return work_sm
 
 
 def _make_result(per_sku_pooled, per_supermodel_breakdown, output_paths,
@@ -90,21 +142,25 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
     (indipendenza statistica, decisione D8), raccoglie i vettori di domanda
     per-run per componente, poi chiama matching.pool_safety_stock().
 
-    LAYOUT (opzione B):
+    LAYOUT (A-staging, flat):
         <input_dir>/Dati Logistica/                 <- CONDIVISA (fissa)
-        <input_dir>/<SuperModel>/Input/{MODEL, Total_demand.xlsx, TR*.xlsx}
+        <input_dir>/States.xlsx, esclusioni.xlsx,
+                    Cambio Valuta.xlsx, affidabilita_config.json   <- CONDIVISI
+        <input_dir>/<SuperModel>/{MODEL/, Total_demand.xlsx, TR*.xlsx, derivati}
 
     PATH/CWD (punto critico): il package usa path RELATIVI ALLA CWD, hardcoded
     (es. matching.calcola_residual_lead_time(input_dir='.\\Input'),
     matching._load_cambio_eur('Input/Cambio Valuta.xlsx'),
     montecarlo.load_monthly_forecast('.\\Input\\...'),
-    bom.OUTPUT_DIR/INPUT_DIR = Path('.')/'Input'). Per questo l'orchestratore fa
-    os.chdir(<SuperModel>) per ciascun supermodel (con ripristino in finally)
-    cosi' './Input/...' punta al suo Input. La cartella 'Dati Logistica' e'
-    invece UNICA e condivisa: viene risolta via config.shared_logistica_dir(),
-    a cui l'orchestratore passa <input_dir>/Dati Logistica impostando la env
-    MIDTERM_SHARED_LOGISTICA per la durata del run (ripristino nel finally).
-    config.input_dir e' impostato a Path('Input'), coerente con la CWD.
+    bom.OUTPUT_DIR/INPUT_DIR = Path('.')/'Input'). bom.py inoltre SCRIVE i file
+    derivati (matrix_output_*, tutte_righe_*, Mappatura_Unificata) dentro
+    ./Input. Per questo, invece di entrare nella cartella supermodel, si fa lo
+    STAGING: per ogni supermodel si assembla <work>/<SM>/Input/ COPIANDO tutto il
+    per-supermodel (da sm_dir) + i condivisi (da input_dir), si fa
+    os.chdir(<work>/<SM>) e si esegue. Cosi' './Input/...' punta a una copia
+    isolata, riscrivibile, che a fine run viene rimossa (rmtree su copie, mai sui
+    dati reali). La 'Dati Logistica' viene copiata in ./Input/Dati Logistica, per
+    cui config.shared_logistica_dir() con env NON impostata risolve correttamente.
 
     Returns:
         MultiSupermodelResult (o fallback namedtuple) con campi
@@ -121,19 +177,14 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
     if not supermodel_dirs:
         raise RuntimeError(f"Nessun supermodel trovato in {input_dir}")
 
-    # Dati Logistica CONDIVISA tra i supermodel: una sola copia, posizione fissa
-    # <input_dir>/Dati Logistica (assoluta). I 3 punti di lettura (Gates per il
-    # max LT, Gates/Dashboard/PREZZI per il residual LT, PREZZI per la
-    # valorizzazione in step 4) la leggono via config.shared_logistica_dir(),
-    # che rispetta MIDTERM_SHARED_LOGISTICA. Impostiamo la env per la durata del
-    # run e la ripristiniamo nel finally (single-supermodel resta invariato).
-    shared_logistica = str((Path(input_dir) / 'Dati Logistica').resolve())
+    # I condivisi (Dati Logistica + i 4 file) stanno direttamente in input_dir.
+    shared_dir = Path(input_dir)
+    # Area temporanea per lo staging, ACCANTO a Input/ (mai dentro), cleanabile.
+    work_root = Path(input_dir).parent / '_work_supermodels'
 
     sm_results = {}
     percentile = None
     cwd0 = os.getcwd()
-    _prev_shared = os.environ.get('MIDTERM_SHARED_LOGISTICA')
-    os.environ['MIDTERM_SHARED_LOGISTICA'] = shared_logistica
     try:
         for k, sm_dir in enumerate(supermodel_dirs):
             sm_name = Path(sm_dir).name
@@ -141,38 +192,43 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
             log.info("=== Supermodel %d/%d: %s (seed=%d) ===",
                      k + 1, len(supermodel_dirs), sm_name, seed)
 
-            # Il package risolve i path hardcoded rispetto alla CWD: entra nella
-            # ROOT del supermodel cosi' './Input/...' punta al suo Input. La
-            # Dati Logistica resta condivisa via MIDTERM_SHARED_LOGISTICA.
-            os.chdir(sm_dir)
+            # Staging: copia tutto il per-supermodel + i condivisi in <work>/<SM>/Input.
+            work_sm = stage_supermodel_input(sm_dir, shared_dir, work_root)
 
-            # input_dir relativo ('Input') coerente con la CWD: cosi' le funzioni
-            # che rispettano config.input_dir e quelle che leggono da './Input'
-            # puntano allo stesso posto (il sotto-Input del supermodel corrente).
-            config = PipelineConfig(
-                input_dir=Path('Input'),
-                output_dir=Path(output_dir) / sm_name,
-            )
+            try:
+                # Il package risolve i path hardcoded rispetto alla CWD: entra
+                # nella dir staged cosi' './Input/...' punta alla copia isolata.
+                os.chdir(work_sm)
 
-            # Nomi-mese dal forecast del supermodel per risolvere start_month.
-            forecast_path = config.resolve_input(config.forecast_file)
-            _, month_names = load_monthly_forecast(str(forecast_path))
+                # input_dir relativo ('Input') coerente con la CWD: le funzioni
+                # che rispettano config.input_dir e quelle che leggono da './Input'
+                # puntano allo stesso posto (l'Input staged del supermodel corrente).
+                config = PipelineConfig(
+                    input_dir=Path('Input'),
+                    output_dir=Path(output_dir) / sm_name,
+                )
 
-            sim_config = load_simulation_config(json_path, month_names)
-            # Indipendenza statistica tra supermodel (D8): seed diverso per ciascuno.
-            sim_config = replace(sim_config, random_seed=seed)
-            if percentile is None:
-                percentile = sim_config.percentile_safety_stock
+                # Nomi-mese dal forecast del supermodel per risolvere start_month.
+                forecast_path = config.resolve_input(config.forecast_file)
+                _, month_names = load_monthly_forecast(str(forecast_path))
 
-            pipeline = SafetyStockPipeline(config, sim_config, validate_config=False)
-            vectors, _df_no_lt = pipeline.run_collect_run_vectors()
-            sm_results[sm_name] = vectors
+                sim_config = load_simulation_config(json_path, month_names)
+                # Indipendenza statistica tra supermodel (D8): seed diverso per ciascuno.
+                sim_config = replace(sim_config, random_seed=seed_base + k)
+                if percentile is None:
+                    percentile = sim_config.percentile_safety_stock
+
+                pipeline = SafetyStockPipeline(config, sim_config, validate_config=False)
+                vectors, _df_no_lt = pipeline.run_collect_run_vectors()
+                sm_results[sm_name] = vectors
+            finally:
+                os.chdir(cwd0)
+                # Rimuove SOLO la copia staged (sotto _work_supermodels), mai i dati reali.
+                shutil.rmtree(work_sm, ignore_errors=True)
     finally:
         os.chdir(cwd0)
-        if _prev_shared is None:
-            os.environ.pop('MIDTERM_SHARED_LOGISTICA', None)
-        else:
-            os.environ['MIDTERM_SHARED_LOGISTICA'] = _prev_shared
+        # Best-effort: rimuove l'intera area temporanea di staging.
+        shutil.rmtree(work_root, ignore_errors=True)
 
     df_pool, breakdown = matching.pool_safety_stock(
         sm_results, percentile=percentile,

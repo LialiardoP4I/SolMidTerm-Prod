@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Smoke end-to-end del CONTRATTO DI LAYOUT (opzione B).
+"""Smoke end-to-end del CONTRATTO DI LAYOUT (A-staging, flat).
 
 Non esegue la pipeline Monte Carlo (troppo pesante / richiede veri Excel):
-verifica che discovery + risoluzione path + os.chdir(sm_root) rispettino il
-contratto, e che l'override Dati Logistica condivisa sia raccolto da
-config.shared_logistica_dir() quando MIDTERM_SHARED_LOGISTICA e' impostata.
+verifica che discovery + staging + os.chdir(<work>/<SM>) rispettino il
+contratto, e che con env NON impostata config.shared_logistica_dir() risolva
+al default ./Input/Dati Logistica (la copia staged).
 """
 import os
 from pathlib import Path
@@ -15,32 +15,40 @@ from mid_term_supermodels import multi_supermodel, config
 def test_layout_contract(tmp_path):
     base = tmp_path / 'Input'
     (base / 'Dati Logistica').mkdir(parents=True)
+    (base / 'States.xlsx').write_text('x')
+    (base / 'esclusioni.xlsx').write_text('x')
+    (base / 'Cambio Valuta.xlsx').write_text('x')
+    (base / 'affidabilita_config.json').write_text('{}')
     for sm in ['SuperA', 'SuperB']:
-        inp = base / sm / 'Input'
-        (inp / 'MODEL').mkdir(parents=True)
-        (inp / 'Total_demand.xlsx').write_text('x')
-        (inp / 'TR FOO.xlsx').write_text('x')
+        sm_dir = base / sm
+        (sm_dir / 'MODEL').mkdir(parents=True)
+        (sm_dir / 'Total_demand.xlsx').write_text('x')
+        (sm_dir / 'TR FOO.xlsx').write_text('x')
 
     found = multi_supermodel.discover_supermodels(str(base))
     names = sorted(Path(p).name for p in found)
     assert names == ['SuperA', 'SuperB']
 
-    # chdir nella ROOT del supermodel -> ./Input/MODEL e ./Input/Total_demand.xlsx risolvono
+    # Staging + chdir: ./Input/MODEL, ./Input/Total_demand.xlsx e i condivisi risolvono.
+    work_root = tmp_path / '_work_supermodels'
     cwd0 = os.getcwd()
     try:
-        os.chdir(found[0])
+        work_sm = multi_supermodel.stage_supermodel_input(found[0], base, work_root)
+        os.chdir(work_sm)
         assert Path('Input/MODEL').is_dir()
         assert Path('Input/Total_demand.xlsx').exists()
+        assert Path('Input/States.xlsx').exists()
+        assert Path('Input/Dati Logistica').is_dir()
+        # env NON impostata -> default risolve alla copia staged.
+        _prev = os.environ.pop('MIDTERM_SHARED_LOGISTICA', None)
+        try:
+            assert config.shared_logistica_dir() == Path('.') / 'Input' / 'Dati Logistica'
+            assert config.shared_logistica_dir().is_dir()
+        finally:
+            if _prev is not None:
+                os.environ['MIDTERM_SHARED_LOGISTICA'] = _prev
     finally:
         os.chdir(cwd0)
-
-    # override Dati Logistica condivisa
-    shared = str(base / 'Dati Logistica')
-    os.environ['MIDTERM_SHARED_LOGISTICA'] = shared
-    try:
-        assert str(config.shared_logistica_dir()) == shared
-    finally:
-        del os.environ['MIDTERM_SHARED_LOGISTICA']
 
 
 def test_shared_logistica_default_when_env_unset():
