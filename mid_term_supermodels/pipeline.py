@@ -648,17 +648,16 @@ class SafetyStockPipeline:
         # 1. Merge prezzi con conversione valuta -> EUR
         if self.config.prices_file:
             try:
-                # PREZZI ora e' PER-SUPERMODEL: vive nella input_dir del
-                # supermodel. Si cerca prima li'; fallback alla Dati Logistica
-                # CONDIVISA (override via env MIDTERM_SHARED_LOGISTICA, default
-                # storico <cwd>/Input/Dati Logistica) solo se assente.
-                _prezzi_matches = sorted(self.config.input_dir.glob("PREZZI*.XLS*"))
-                if _prezzi_matches:
-                    prezzi_path = _prezzi_matches[0]
+                # PREZZI e' CONDIVISO in Dati Logistica (override via env
+                # MIDTERM_SHARED_LOGISTICA, default <cwd>/Input/Dati Logistica);
+                # fallback alla input_dir del supermodel solo se assente.
+                _logistica = shared_logistica_dir()
+                _shared_matches = sorted(_logistica.glob("PREZZI*.XLS*"))
+                if _shared_matches:
+                    prezzi_path = _shared_matches[0]
                 else:
-                    _logistica = shared_logistica_dir()
-                    _shared_matches = sorted(_logistica.glob("PREZZI*.XLS*"))
-                    prezzi_path = (_shared_matches[0] if _shared_matches
+                    _prezzi_matches = sorted(self.config.input_dir.glob("PREZZI*.XLS*"))
+                    prezzi_path = (_prezzi_matches[0] if _prezzi_matches
                                    else _logistica / "PREZZI.XLSX")
                 all_data = pd.read_excel(prezzi_path, sheet_name="Sheet1")
 
