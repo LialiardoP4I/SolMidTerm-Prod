@@ -8,6 +8,8 @@ import dataclasses
 import json
 import os
 import shutil
+import stat
+import tempfile
 import time
 from collections import namedtuple
 from dataclasses import replace
@@ -40,6 +42,36 @@ _FALLBACK_RESULT_FIELDS = (
 _MultiSupermodelResultFallback = namedtuple(
     "MultiSupermodelResult", _FALLBACK_RESULT_FIELDS
 )
+
+
+def _robust_rmtree(path):
+    """Rimuove una cartella in modo robusto su Windows (best-effort, non solleva).
+
+    I file copiati da sorgenti OneDrive possono essere read-only: rmtree
+    fallirebbe con PermissionError. L'handler forza il permesso di scrittura
+    e ritenta. Compatibile con onexc (Py 3.12+) e onerror (precedenti).
+    """
+    if not os.path.exists(path):
+        return
+
+    def _onerr(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except Exception:
+            pass
+
+    try:
+        shutil.rmtree(path, onexc=_onerr)
+    except TypeError:
+        shutil.rmtree(path, onerror=_onerr)
+    except Exception:
+        pass
+
+
+def _new_work_root():
+    """Crea una dir di staging unica in TEMP (fuori da OneDrive: niente lock/sync)."""
+    return Path(tempfile.mkdtemp(prefix='midterm_sm_'))
 
 
 def discover_supermodels(input_dir: str) -> List[str]:
@@ -86,9 +118,9 @@ def stage_supermodel_input(sm_dir, shared_dir, work_root):
     staged_input = work_sm / 'Input'
 
     # Clean slate: rimuovi un eventuale staging precedente (sempre sotto work_root,
-    # MAI il vero Input/ dei dati).
+    # MAI il vero Input/ dei dati). rmtree robusto per i read-only Windows/OneDrive.
     if work_sm.exists():
-        shutil.rmtree(work_sm)
+        _robust_rmtree(work_sm)
 
     # Copia l'intero contenuto per-supermodel: MODEL/, Total_demand, TR,
     # Mappatura_Unificata, matrix_output_*, tutte_righe_* (tutto cio' che esiste).
@@ -185,8 +217,9 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
 
     # I condivisi (Dati Logistica + i 4 file) stanno direttamente in input_dir.
     shared_dir = Path(input_dir)
-    # Area temporanea per lo staging, ACCANTO a Input/ (mai dentro), cleanabile.
-    work_root = Path(input_dir).parent / '_work_supermodels'
+    # Area temporanea per lo staging in TEMP (fuori OneDrive: niente lock/sync che
+    # romperebbero rmtree su Windows). Unica per run, cleanabile.
+    work_root = _new_work_root()
 
     sm_results = {}
     percentile = None
@@ -213,6 +246,9 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
                     input_dir=Path('Input'),
                     output_dir=Path(output_dir) / sm_name,
                 )
+                # Crea Output/<SM>/ prima del run: write_intermediate salva il
+                # catalogo + matrici per supermodel in modo persistente.
+                os.makedirs(config.output_dir, exist_ok=True)
 
                 # Nomi-mese dal forecast del supermodel per risolvere start_month.
                 forecast_path = config.resolve_input(config.forecast_file)
@@ -229,12 +265,12 @@ def run_multi_supermodel(input_dir: str, output_dir: str, json_path: str,
                 sm_results[sm_name] = vectors
             finally:
                 os.chdir(cwd0)
-                # Rimuove SOLO la copia staged (sotto _work_supermodels), mai i dati reali.
-                shutil.rmtree(work_sm, ignore_errors=True)
+                # Rimuove SOLO la copia staged (in TEMP), mai i dati reali.
+                _robust_rmtree(work_sm)
     finally:
         os.chdir(cwd0)
         # Best-effort: rimuove l'intera area temporanea di staging.
-        shutil.rmtree(work_root, ignore_errors=True)
+        _robust_rmtree(work_root)
 
     df_pool, breakdown = matching.pool_safety_stock(
         sm_results, percentile=percentile,
@@ -341,7 +377,8 @@ def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str
         raise RuntimeError(f"Nessun supermodel trovato in {input_dir}")
 
     shared_dir = Path(input_dir)
-    work_root = Path(input_dir).parent / '_work_supermodels'
+    # Staging in TEMP (fuori OneDrive: evita lock/sync che romperebbero rmtree).
+    work_root = _new_work_root()
 
     sm_rolling = {}      # { sm_name : { mese_lancio : {'vectors', 'troncata', ...} } }
     percentile = None
@@ -361,6 +398,11 @@ def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str
                     input_dir=Path('Input'),
                     output_dir=Path(output_dir) / sm_name,
                 )
+                # Crea Output/<SM>/ PRIMA del run cosi' write_intermediate salva
+                # tutte_righe_univoche_V2.xlsx + matrix_output_* per supermodel in
+                # modo persistente (altrimenti finirebbero solo nello staged ./Input
+                # temporaneo, cancellato dal rmtree).
+                os.makedirs(config_sm.output_dir, exist_ok=True)
 
                 # Nomi-mese dal forecast per-supermodel (per costruire sim_config).
                 forecast_path = config_sm.resolve_input(config_sm.forecast_file)
@@ -376,10 +418,10 @@ def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str
                 sm_rolling[sm_name] = rolling_res
             finally:
                 os.chdir(cwd0)
-                shutil.rmtree(work_sm, ignore_errors=True)
+                _robust_rmtree(work_sm)
     finally:
         os.chdir(cwd0)
-        shutil.rmtree(work_root, ignore_errors=True)
+        _robust_rmtree(work_root)
 
     if percentile is None:
         percentile = 99

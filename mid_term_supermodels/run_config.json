@@ -1,5 +1,5 @@
 {
-  "n_runs": 100,
+  "n_runs": 10,
   "random_seed": 42,
   "start_month": "MAY 2026",
   "percentile_safety_stock": 99,
@@ -7,5 +7,5 @@
   "affidabilita_optional": "BASSA",
   "gate_max_mesi": 4,
   "multi_supermodel": true,
-  "rolling": false
+  "rolling": true
 }

@@ -227,8 +227,13 @@ class SafetyStockPipeline:
         for _d in _cleanup_dirs:
             _cleanup_bom_files(_d)
 
-        # 1. Mappatura unificata (path hardcoded in mid_term.bom)
-        build_unified_mapping()
+        # 1. Mappatura unificata: passa le mappature dei modelli scoperti per il
+        #    supermodel corrente (config.input_dir/MODEL/<modello>/Mappatura_*),
+        #    invece della costante MAPPATURE_ORIGINALI di bom.py (calcolata
+        #    all'import su ./Input/MODEL generico, vuota nel layout multi-supermodel).
+        _mappature_src = [info["mappatura"] for info in _discovered.values()
+                          if info.get("mappatura")]
+        build_unified_mapping(source_files=_mappature_src if _mappature_src else None)
 
         # 2. Quality checks (legge file hardcoded in mid_term.bom)
         residual_issues, price_issues, ct_cv_issues, tr_char_options, states_set = \
