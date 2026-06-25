@@ -31,7 +31,10 @@ from mid_term_supermodels import SafetyStockPipeline, PipelineConfig
 from mid_term_supermodels.config import load_simulation_config
 from mid_term_supermodels.montecarlo import load_monthly_forecast
 
-JSON_PATH = PKG / "run_config.json"
+# Config di run: di default run_config.json del package; sovrascrivibile via env
+# MIDTERM_RUN_CONFIG (usato dalla UI per passare parametri/selezione senza toccare
+# il run_config.json reale).
+JSON_PATH = Path(os.environ.get("MIDTERM_RUN_CONFIG") or (PKG / "run_config.json"))
 
 
 def main():
@@ -57,6 +60,7 @@ def main():
                 output_dir=str(config.output_dir),
                 json_path=str(JSON_PATH),
                 seed_base=_cfg_raw.get('random_seed', 42),
+                only_supermodels=_cfg_raw.get('only_supermodels'),
             )
             print(f"[multi-supermodel rolling] pooled output: {result.output_paths}")
             return result

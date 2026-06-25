@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -165,25 +166,37 @@ with tab_run:
         run_cfg = dict(cfg)
         run_cfg.update({"n_runs": int(n_runs), "percentile_safety_stock": int(percentile),
                         "affidabilita_model": aff_model, "affidabilita_optional": aff_optional,
-                        "gate_max_mesi": int(gate_max), "multi_supermodel": True, "rolling": True})
-        # JSON temporaneo con i parametri scelti (non sovrascrive run_config.json)
+                        "gate_max_mesi": int(gate_max), "multi_supermodel": True, "rolling": True,
+                        "only_supermodels": selected})
+        # JSON temporaneo con i parametri scelti (non sovrascrive run_config.json).
         tmp = Path(tempfile.gettempdir()) / "_app_run_config_supermodels.json"
         tmp.write_text(json.dumps(run_cfg, indent=2), encoding="utf-8")
+        # IMPORTANTE: il run gira in SUBPROCESS. L'orchestratore fa os.chdir nelle
+        # cartelle di staging temporanee: eseguirlo in-process cambierebbe la CWD
+        # del processo Streamlit e lo romperebbe (non ritroverebbe lo script).
+        env = dict(os.environ)
+        env["MIDTERM_RUN_CONFIG"] = str(tmp)
         t0 = time.time()
         try:
             with st.spinner(f"Esecuzione su {len(selected)} supermodel — può richiedere parecchi minuti…"):
-                result = ms.run_multi_supermodel_rolling(
-                    input_dir=str(INPUT_DIR), output_dir=str(OUTPUT_DIR),
-                    json_path=str(tmp), seed_base=int(run_cfg.get("random_seed", 42)),
-                    only_supermodels=selected,
+                proc = subprocess.run(
+                    [sys.executable, str(PKG / "run_pipeline.py")],
+                    cwd=str(PKG), env=env, capture_output=True, text=True, timeout=7200,
                 )
-            st.success(f"✅ Completato in {time.time() - t0:.0f}s. "
-                       f"Output: {result.output_paths.get('pooled_rolling', '?')}")
-            st.session_state["_ran"] = True
-            st.cache_data.clear()
+            if proc.returncode == 0:
+                st.success(f"✅ Completato in {time.time() - t0:.0f}s. "
+                           f"Output: {OUTPUT_DIR / POOLED_NAME}")
+                st.cache_data.clear()
+                with st.expander("Log esecuzione"):
+                    st.code((proc.stdout or proc.stderr or "")[-6000:])
+            else:
+                st.error("❌ Errore durante l'esecuzione (vedi log).")
+                with st.expander("Log errore", expanded=True):
+                    st.code((proc.stderr or proc.stdout or "")[-6000:])
+        except subprocess.TimeoutExpired:
+            st.error("❌ Timeout (>2h). Riduci n_runs o il numero di supermodel.")
         except Exception as e:
-            st.error(f"❌ Errore durante l'esecuzione: {e}")
-            st.exception(e)
+            st.error(f"❌ Errore avvio run: {e}")
 
 # ----------------------------------------------------------------------------
 # TAB RISULTATI
