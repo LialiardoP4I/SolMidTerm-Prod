@@ -203,13 +203,14 @@ def run_rolling(config: PipelineConfig,
         # --- Raccolta righe output_rolling_def per questa iterazione ---
         # Plan_Month = mese_lancio; Safety_Stock_Qty = SS windowed su residual LT
         # calcolata DA QUESTA iterazione (dinamica per Plan_Month); Demand_Qty =
-        # domanda del SINGOLO mese di lancio (monthly_stats) x qty; Cycle = Demand x Freq.
+        # domanda del SINGOLO mese di lancio (monthly_stats, già in PEZZI: qty
+        # per-config applicata nel matching); Cycle = Demand x Freq.
         for _rec in per_sku.to_dict("records"):
             _sku = str(_rec.get("SKU"))
-            _qty = float(_rec.get("Quantity_Per_Bike", 1.0) or 0.0)
             _ms = _rec.get("monthly_stats") or {}
             _sm = _ms.get(mese_lancio) or {}
-            _demand = round(float(_sm.get("mean_demand", 0.0)) * _qty, 2)
+            # NON moltiplicare per qty: mean_demand di monthly_stats è già in pezzi.
+            _demand = round(float(_sm.get("mean_demand", 0.0)), 2)
             _freq = freq_map.get(_sku)
             _cycle = (round(_demand * float(_freq), 2)
                       if _freq is not None and pd.notna(_freq) else 0.0)

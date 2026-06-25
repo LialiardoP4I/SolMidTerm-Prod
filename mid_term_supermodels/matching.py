@@ -1432,9 +1432,11 @@ def save_results_monthly(results_df: pd.DataFrame,
             if month_rank <= lead_time_ceil and mese in monthly_stats:
                 # Mese coperto dal lead time: popola con i dati calcolati
                 stats_m  = monthly_stats[mese]
+                # monthly_stats è già in PEZZI (qty per-config applicata): NON
+                # moltiplicare di nuovo per qty. _total coincide con ss_val.
                 mean_val = round(stats_m.get('mean_demand', 0.0), 2)
                 ss_val   = round(stats_m.get(ss_key, 0.0), 2)
-                ss_tot   = round(ss_val * qty, 2)
+                ss_tot   = ss_val
             else:
                 # Mese oltre il lead time (o mese non simulato): zero
                 mean_val = 0.0
@@ -1768,12 +1770,14 @@ def _compute_run_demands_for_sku(sku_data, ctx):
 
     matching_indices = np.where(spec_per_cfg >= 0)[0]
     if len(matching_indices) == 0:
-        return np.zeros(ctx.n_runs, dtype=np.float32), matching_indices
+        return np.zeros(ctx.n_runs, dtype=np.float32), matching_indices, qty_per_cfg
     run_demands = aggregate_monthly_demands_numpy(
         matching_indices, ctx.data_matrix, ctx.month_col_indices,
         sku_data['lead_time'], ctx.n_runs, qty_weights=qty_per_cfg
     )
-    return run_demands, matching_indices
+    # qty_per_cfg (peso qty per configurazione) restituito così anche il calcolo
+    # mensile (monthly_stats) può pesare la domanda in PEZZI, coerente con l'aggregato.
+    return run_demands, matching_indices, qty_per_cfg
 
 
 def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
@@ -1805,10 +1809,13 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
     all_results = []
     try:
         for sku_idx, (sku_id, sku_data) in enumerate(zip(ctx.sku_ids, ctx.sku_data_list)):
-            run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
+            run_demands, matching_indices, qty_per_cfg = _compute_run_demands_for_sku(sku_data, ctx)
             if len(matching_indices) == 0:
                 continue
             stats = calculate_statistics(run_demands, percentile=percentile)
+
+            # Pesi qty per le configurazioni matchate (per monthly_stats in PEZZI)
+            _wm = qty_per_cfg[matching_indices].astype(np.float32)
 
             monthly_stats = {}
             for month_idx, prefix in enumerate(ctx.month_prefixes):
@@ -1816,7 +1823,8 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
                 if not col_indices_month:
                     continue
                 month_data = ctx.data_matrix[np.ix_(matching_indices, col_indices_month)]
-                run_demands_month = month_data.sum(axis=0).astype(np.int32)
+                # domanda mensile in PEZZI: pesa ogni config per la sua qty
+                run_demands_month = (month_data.astype(np.float32) * _wm[:, None]).sum(axis=0)
                 monthly_stats[prefix] = calculate_statistics(run_demands_month,
                                                              percentile=percentile)
 
@@ -1864,7 +1872,7 @@ def match_skus_preserve_run_vectors(sku_catalog, lead_times, simulation_output,
     vectors = {}
     try:
         for sku_id, sku_data in zip(ctx.sku_ids, ctx.sku_data_list):
-            run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
+            run_demands, matching_indices, _qpc = _compute_run_demands_for_sku(sku_data, ctx)
             if len(matching_indices) == 0:
                 continue
             # Copia esplicita: data_matrix/memmap viene liberata da cleanup().

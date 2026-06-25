@@ -13,7 +13,7 @@ def test_build_context_and_run_demands():
     try:
         # SKU1 (MODEL=MSV4) deve aggregare la domanda della config A: 10 per ogni run
         sku_data = next(d for sid, d in zip(ctx.sku_ids, ctx.sku_data_list) if sid == 'SKU1')
-        run_demands, idxs = matching._compute_run_demands_for_sku(sku_data, ctx)
+        run_demands, idxs, _qpc = matching._compute_run_demands_for_sku(sku_data, ctx)
         assert run_demands.tolist() == [10.0, 10.0, 10.0, 10.0]
     finally:
         ctx.cleanup()
