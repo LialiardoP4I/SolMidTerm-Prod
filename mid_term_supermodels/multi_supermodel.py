@@ -341,7 +341,7 @@ def _build_sim_config_for_supermodel(json_path, month_names, k, seed_base):
 
 
 def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str,
-                                 seed_base: int = 42):
+                                 seed_base: int = 42, only_supermodels=None):
     """Orchestratore multi-supermodel in modalita' ROLLING + pooling per mese.
 
     Per ogni supermodel esegue collect_run_vectors_rolling (rolling sui mesi di
@@ -375,6 +375,12 @@ def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str
     supermodel_dirs = discover_supermodels(input_dir)
     if not supermodel_dirs:
         raise RuntimeError(f"Nessun supermodel trovato in {input_dir}")
+    # Filtro opzionale: usa solo i supermodel selezionati (per nome cartella).
+    if only_supermodels:
+        _wanted = {str(s).strip() for s in only_supermodels}
+        supermodel_dirs = [d for d in supermodel_dirs if Path(d).name in _wanted]
+        if not supermodel_dirs:
+            raise RuntimeError(f"Nessuno dei supermodel selezionati trovato: {only_supermodels}")
 
     shared_dir = Path(input_dir)
     # Staging in TEMP (fuori OneDrive: evita lock/sync che romperebbero rmtree).
