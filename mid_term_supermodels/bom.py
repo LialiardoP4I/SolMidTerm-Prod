@@ -3470,9 +3470,13 @@ def run_quality_checks() -> tuple:
     if STATES_FILE.exists():
         states_set = _load_states_set(str(STATES_FILE))
 
-    # Build TR char options (per allineamento nomi)
+    # Build TR char options (per allineamento nomi).
+    # Cerca un file TR esistente in INPUT_DIR (nome non più fisso: ora 'TR.xlsx'
+    # per supermodel). Fallback al nome legacy se nessun TR* trovato.
+    _tr_candidates = sorted(INPUT_DIR.glob("TR*.xls*"))
+    _tr_for_qc = str(_tr_candidates[0]) if _tr_candidates else str(INPUT_DIR / "TR TOTALV21E - Copia.xlsx")
     try:
-        tr_char_options = _build_tr_char_options(str(INPUT_DIR / "TR TOTALV21E - Copia.xlsx"))
+        tr_char_options = _build_tr_char_options(_tr_for_qc)
     except Exception as e:
         log.warning('  [WARN] TR char options: %s', e)
 
