@@ -3,12 +3,12 @@ from mid_term_supermodels import matching
 
 
 def test_pooling_sumproduct_and_risk_pooling():
-    # 2 supermodel, n_runs=4. Componente 'X' condiviso.
-    # SuperA: bici [10,10,10,10] qty 1 -> pezzi [10,10,10,10] (varianza 0)
-    # SuperB: bici [0,5,10,20]   qty 2 -> pezzi [0,10,20,40]
+    # 2 supermodel, n_runs=4. Componente 'X' condiviso. Vettori GIÀ in PEZZI
+    # (qty per-config applicata a monte); il pool non moltiplica più (qty=1.0).
+    # SuperA pezzi [10,10,10,10] (varianza 0); SuperB pezzi [0,10,20,40]
     sm_results = {
         'SuperA': {'X': (np.array([10, 10, 10, 10], dtype=np.float32), 1.0, 1.0, 'desc')},
-        'SuperB': {'X': (np.array([0, 5, 10, 20], dtype=np.float32), 2.0, 1.0, 'desc')},
+        'SuperB': {'X': (np.array([0, 10, 20, 40], dtype=np.float32), 1.0, 1.0, 'desc')},
     }
     df_pool, breakdown = matching.pool_safety_stock(sm_results, percentile=99, n_runs=4)
     row = df_pool[df_pool['SKU'] == 'X'].iloc[0]

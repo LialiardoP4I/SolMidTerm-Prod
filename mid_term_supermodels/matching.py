@@ -876,27 +876,12 @@ def load_lead_times(solo_modello_skus=None,
     log.info("BOM trovato: %s", bom_path)
     df_bom = pd.read_excel(bom_path, sheet_name=0)
 
-    # Estrai SKU + Qty da BOM
-    bom_qty = df_bom[['Numero componenti', 'Qtà comp. (UMC)']].copy()
-    bom_qty.columns = ['SKU', 'Quantity_Per_Bike']
-
-    # Aggrega per SKU (stesso SKU può apparire più volte con qty diverse)
-    # Prendi max qty
-    bom_qty_unique = bom_qty.groupby('SKU', as_index=False).agg({
-        'Quantity_Per_Bike': 'max'
-    })
-    log.info("BOM SKU univoci: %d", len(bom_qty_unique))
-
-    # 3. Merge Residual_LT + BOM Qty
-    lead_times = pd.merge(
-        lead_times_residual,
-        bom_qty_unique,
-        on='SKU',
-        how='left'
-    )
-
-    # 4. Default: Quantity_Per_Bike = 1.0 se non in BOM
-    lead_times['Quantity_Per_Bike'] = lead_times['Quantity_Per_Bike'].fillna(1.0)
+    # 3. La qty NON è più gestita qui: è PER-CONFIGURAZIONE nel catalogo
+    #    (colonna Qta_comp_UMC, sommata per dipendenza in bom.py). Manteniamo una
+    #    colonna Quantity_Per_Bike=1.0 solo per retro-compatibilità di eventuali
+    #    consumatori a valle che la leggono (non usata nel calcolo).
+    lead_times = lead_times_residual.copy()
+    lead_times['Quantity_Per_Bike'] = 1.0
 
     # 5. Crea Lead_Time_Months_Ceil (stesso valore di Lead_Time_Months per decimali)
     lead_times['Lead_Time_Months_Ceil'] = lead_times['Lead_Time_Months'].copy()
@@ -1113,7 +1098,8 @@ def aggregate_monthly_demands_numpy(matching_indices: np.ndarray,
                                     data_matrix: np.ndarray,
                                     month_col_indices: Dict[int, List[int]],
                                     lead_time_months: float,
-                                    n_runs: int) -> np.ndarray:
+                                    n_runs: int,
+                                    qty_weights: np.ndarray = None) -> np.ndarray:
     """
     Aggrega la domanda delle configurazioni matching per i mesi del lead time.
     Supporta INTERPOLAZIONE LINEARE per lead time decimali.
@@ -1144,6 +1130,13 @@ def aggregate_monthly_demands_numpy(matching_indices: np.ndarray,
     if len(matching_indices) == 0:
         return np.zeros(n_runs, dtype=np.float32)
 
+    # Pesi qty per configurazione (se forniti): ogni riga config viene pesata per
+    # la sua qty (qty_per_config). Senza pesi -> peso 1 (conteggio bici).
+    if qty_weights is not None:
+        _w = np.asarray(qty_weights, dtype=np.float32)[matching_indices]  # peso per riga matchata
+    else:
+        _w = None
+
     # Accumula domanda per tutti i run (usa float32 per frazioni)
     aggregated = np.zeros(n_runs, dtype=np.float32)
 
@@ -1161,8 +1154,12 @@ def aggregate_monthly_demands_numpy(matching_indices: np.ndarray,
         # NUMPY FANCY INDEXING: estrai sottomatrice [righe matching × colonne mese]
         month_data = data_matrix[np.ix_(matching_indices, col_indices)]
 
-        # Somma per colonna (ogni colonna = un run)
-        aggregated[:len(col_indices)] += month_data.sum(axis=0).astype(np.float32)
+        # Somma per colonna (ogni colonna = un run); pesata per qty se richiesto
+        if _w is not None:
+            contrib = (month_data.astype(np.float32) * _w[:, None]).sum(axis=0)
+        else:
+            contrib = month_data.sum(axis=0).astype(np.float32)
+        aggregated[:len(col_indices)] += contrib
 
     # MESE PARZIALE: aggiungi frazione del mese successivo (interpolazione lineare)
     if lead_time_frac > 0 and lead_time_full < len(month_col_indices):
@@ -1172,8 +1169,11 @@ def aggregate_monthly_demands_numpy(matching_indices: np.ndarray,
             # Estrai domanda del mese parziale
             partial_month_data = data_matrix[np.ix_(matching_indices, col_indices_partial)]
 
-            # Somma per colonna e moltiplica per la frazione
-            partial_demand = partial_month_data.sum(axis=0).astype(np.float32) * lead_time_frac
+            if _w is not None:
+                partial_demand = ((partial_month_data.astype(np.float32) * _w[:, None]).sum(axis=0)
+                                  * lead_time_frac)
+            else:
+                partial_demand = partial_month_data.sum(axis=0).astype(np.float32) * lead_time_frac
             aggregated[:len(col_indices_partial)] += partial_demand
 
     return aggregated
@@ -1620,13 +1620,20 @@ def _build_matching_context(sku_catalog, lead_times, simulation_output,
     # STEP 3: Prepara dati SKU con espansione multi-modello
     log.info("[SETUP] Preparazione dati SKU V2 (con espansione multi-modello)...")
 
+    _lt_cols = ['SKU', 'Lead_Time_Months', 'Lead_Time_Months_Ceil', 'Description']
     _sku_merged_all = sku_catalog.merge(
-        lead_times[['SKU', 'Lead_Time_Months', 'Lead_Time_Months_Ceil',
-                    'Quantity_Per_Bike', 'Description']],
+        lead_times[_lt_cols],
         left_on='Numero componenti',
         right_on='SKU',
         how='left'
     )
+    # qty PER-RIGA dal catalogo (Qta_comp_UMC, somma per dipendenza fatta in bom.py);
+    # fallback 1.0 se assente. NON più scalare da lead_times.
+    if 'Qta_comp_UMC' in _sku_merged_all.columns:
+        _sku_merged_all['Qta_comp_UMC'] = pd.to_numeric(
+            _sku_merged_all['Qta_comp_UMC'], errors='coerce').fillna(1.0)
+    else:
+        _sku_merged_all['Qta_comp_UMC'] = 1.0
 
     # Traccia SKU esclusi (LT mancante o zero) per reporting (replica main_sku_v2 ALL)
     _mask_no_lt = (
@@ -1647,9 +1654,8 @@ def _build_matching_context(sku_catalog, lead_times, simulation_output,
     log.info("SKU senza lead time utile: %d", len(df_no_lt))
 
     sku_with_lt = _sku_merged_all[~_mask_no_lt].copy()
-    # Mantieni come float per supportare interpolazione lineare (0.25, 0.5, etc.)
-    # sku_with_lt['Lead_Time_Months_Ceil'] = sku_with_lt['Lead_Time_Months_Ceil'].astype(int)
-    sku_with_lt['Quantity_Per_Bike'] = sku_with_lt['Quantity_Per_Bike'].fillna(1.0)
+    # Mantieni Lead_Time_Months_Ceil come float per interpolazione lineare.
+    # qty NON più scalare: è per-riga in Qta_comp_UMC.
 
     sku_groups = sku_with_lt.groupby('SKU')
 
@@ -1659,20 +1665,34 @@ def _build_matching_context(sku_catalog, lead_times, simulation_output,
     sku_ids = []
     sku_data_list = []
 
+    def _specificita(rv):
+        # numero di caratteristiche VINCOLATE (non jolly): jolly = 'no'/vuoto/nan.
+        n = 0
+        for _v in rv.values():
+            if pd.isna(_v):
+                continue
+            _s = str(_v).strip().lower()
+            if _s and _s != 'no':
+                n += 1
+        return n
+
     for sku_id, sku_rows_group in sku_groups:
         sku_ids.append(sku_id)
         rows_values = []
+        rows_qtys = []
+        rows_specs = []
 
         for _, row in sku_rows_group.iterrows():
             row_values = {}
             for sku_col in column_mapping.keys():
                 if sku_col in row.index:
                     row_values[sku_col] = row[sku_col]
+            _qrow = float(row['Qta_comp_UMC']) if 'Qta_comp_UMC' in row.index else 1.0
+            _srow = _specificita(row_values)
 
             # --- ESPANSIONE MULTI-MODELLO (V2) ---
             # Se Model='MSV4+MSV4S', crea due entries: una per MSV4, una per MSV4S.
-            # La logica OR esistente le gestisce: un componente con Model='MSV4+MSV4S'
-            # matcha qualsiasi configurazione con MODEL='MSV4' O MODEL='MSV4S'.
+            # qty e specificità sono replicate identiche sulle entries espanse.
             if model_sku_col and model_sku_col in row_values:
                 model_val = str(row_values[model_sku_col]).strip()
                 if '+' in model_val:
@@ -1680,15 +1700,23 @@ def _build_matching_context(sku_catalog, lead_times, simulation_output,
                         expanded = dict(row_values)
                         expanded[model_sku_col] = single_model.strip()
                         rows_values.append(expanded)
+                        rows_qtys.append(_qrow)
+                        rows_specs.append(_srow)
                 else:
                     rows_values.append(row_values)
+                    rows_qtys.append(_qrow)
+                    rows_specs.append(_srow)
             else:
                 rows_values.append(row_values)
+                rows_qtys.append(_qrow)
+                rows_specs.append(_srow)
 
         sku_data_list.append({
             'values': rows_values,
+            'qtys': rows_qtys,
+            'specs': rows_specs,
             'lead_time': float(sku_rows_group['Lead_Time_Months_Ceil'].max()),
-            'quantity': float(sku_rows_group['Quantity_Per_Bike'].mean()),
+            'quantity': float(max(rows_qtys)) if rows_qtys else 1.0,  # solo per report
             'description': sku_rows_group['Description'].iloc[0]
                            if 'Description' in sku_rows_group.columns else '',
             'lead_time_raw': sku_rows_group['Lead_Time_Months'].iloc[0]
@@ -1706,23 +1734,44 @@ def _build_matching_context(sku_catalog, lead_times, simulation_output,
 
 
 def _compute_run_demands_for_sku(sku_data, ctx):
-    """Calcola (run_demands[n_runs], matching_indices) per uno SKU.
+    """Calcola (run_demands_PEZZI[n_runs], matching_indices) per uno SKU.
 
-    Sposta qui, INVARIATO, il core del loop dell'originale.
-    run_demands è in BICI (non moltiplicato per qty).
+    Per ogni CONFIGURAZIONE assegna la qty della riga-dipendenza che la soddisfa,
+    con regola "la riga PIÙ SPECIFICA vince" (più caratteristiche vincolate); a
+    pari specificità -> MAX(qty) (tie-break conservativo). Poi aggrega la domanda
+    pesando ogni config per la sua qty -> run_demands è già in PEZZI.
+
+    Le dipendenze diverse sono separate dalle caratteristiche (incl. Model); la
+    regola più-specifica-vince evita il doppio conteggio delle righe annidate
+    (es. {RIMS:Cast} vs {RIMS:Cast, BRAKE:Stylema}).
     """
-    combined_mask = np.zeros(ctx.n_rows, dtype=bool)
-    for row_values in sku_data['values']:
+    qtys = sku_data.get('qtys') or [1.0] * len(sku_data['values'])
+    specs = sku_data.get('specs') or [0] * len(sku_data['values'])
+
+    qty_per_cfg = np.zeros(ctx.n_rows, dtype=np.float32)
+    spec_per_cfg = np.full(ctx.n_rows, -1, dtype=np.int32)  # -1 = nessuna riga assegnata
+
+    for row_values, qty_r, spec_r in zip(sku_data['values'], qtys, specs):
         row_mask = sku_matches_combination_numpy(
             row_values, ctx.norm_arrays, ctx.category_maps, ctx.column_mapping, ctx.n_rows
         )
-        combined_mask |= row_mask
-    matching_indices = np.where(combined_mask)[0]
+        if not row_mask.any():
+            continue
+        # più specifica vince: dove questa riga è più specifica della corrente
+        better = row_mask & (spec_r > spec_per_cfg)
+        qty_per_cfg[better] = qty_r
+        spec_per_cfg[better] = spec_r
+        # pari specificità: tie-break MAX della qty
+        tie = row_mask & (spec_r == spec_per_cfg)
+        if tie.any():
+            qty_per_cfg[tie] = np.maximum(qty_per_cfg[tie], np.float32(qty_r))
+
+    matching_indices = np.where(spec_per_cfg >= 0)[0]
     if len(matching_indices) == 0:
         return np.zeros(ctx.n_runs, dtype=np.float32), matching_indices
     run_demands = aggregate_monthly_demands_numpy(
         matching_indices, ctx.data_matrix, ctx.month_col_indices,
-        sku_data['lead_time'], ctx.n_runs
+        sku_data['lead_time'], ctx.n_runs, qty_weights=qty_per_cfg
     )
     return run_demands, matching_indices
 
@@ -1783,7 +1832,9 @@ def match_skus_ultra_optimized(sku_catalog: pd.DataFrame,
                 'monthly_stats': monthly_stats,
             }
             result.update(stats)
-            result[f'{ss_key}_total'] = result[ss_key] * sku_data['quantity']
+            # run_demands è già in PEZZI (qty per-config applicata nel matching):
+            # _total coincide con la safety stock (nessuna moltiplicazione scalare).
+            result[f'{ss_key}_total'] = result[ss_key]
             all_results.append(result)
 
             if sku_idx % 1000 == 0:
@@ -1816,9 +1867,12 @@ def match_skus_preserve_run_vectors(sku_catalog, lead_times, simulation_output,
             run_demands, matching_indices = _compute_run_demands_for_sku(sku_data, ctx)
             if len(matching_indices) == 0:
                 continue
-            # Copia esplicita: data_matrix/memmap viene liberata da cleanup()
+            # Copia esplicita: data_matrix/memmap viene liberata da cleanup().
+            # run_demands è già in PEZZI (qty per-config applicata): qty=1.0 nel
+            # tuple (il pool non moltiplica più). float(sku_data['quantity']) resta
+            # come info rappresentativa ma NON viene usata per riscalare.
             vectors[sku_id] = (np.array(run_demands, dtype=np.float32, copy=True),
-                               float(sku_data['quantity']),
+                               1.0,
                                float(sku_data['lead_time']),
                                sku_data['description'])
     finally:
@@ -1879,7 +1933,9 @@ def pool_safety_stock(supermodel_results, percentile=99, n_runs=None):
             run_demands, qty, lead_time, desc = entry
             if not description and desc and str(desc).strip():
                 description = str(desc).strip()
-            pezzi_sm = np.asarray(run_demands, dtype=np.float64) * qty
+            # run_demands è già in PEZZI (qty per-config applicata nel matching):
+            # NON moltiplicare di nuovo per qty.
+            pezzi_sm = np.asarray(run_demands, dtype=np.float64)
             pooled += pezzi_sm
             lead_times_seen.append(lead_time)
 

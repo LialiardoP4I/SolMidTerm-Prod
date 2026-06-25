@@ -48,9 +48,11 @@ def test_run_multi_supermodel_rolling_month_aligned_pooling(tmp_path, monkeypatc
     )
 
     # Rolling per-supermodel: vettori per-run noti, deterministici.
+    # Vettori GIÀ in PEZZI (qty per-config applicata a monte); il pool non
+    # moltiplica più per qty (qty=1.0 nel tuple).
     a_jan = (np.array([10, 10, 10, 10], dtype=float), 1.0, 1.0, 'x')
     a_feb = (np.array([5, 5, 5, 5], dtype=float), 1.0, 1.0, 'x')
-    b_jan = (np.array([0, 5, 10, 20], dtype=float), 2.0, 1.0, 'x')
+    b_jan = (np.array([0, 10, 20, 40], dtype=float), 1.0, 1.0, 'x')
 
     def fake_collect(config, sim_config, max_iterations=None):
         # sm_name distinto via output_dir (Output/<SM>).
