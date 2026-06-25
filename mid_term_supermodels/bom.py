@@ -1832,6 +1832,35 @@ def process_excel_to_matrix_v2(excel_path: str = None,
 
     bom_data = df.copy()
 
+    # PRE-SOMMA qty a parità di (componente, dipendenza): somma le righe con la
+    # STESSA condizione (posizioni diverse della distinta) PRIMA dell'espansione
+    # mercati. Chiave = condizione CANONICALIZZATA (predicati ordinati, spazi
+    # normalizzati) per unire dipendenze logicamente identiche scritte diversamente.
+    # NON somma su mercati: la condizione completa (incl. ZCOUNTRY/ZPLT) resta chiave.
+    import re as _re
+    _qcol_pre = next((c for c in bom_data.columns if str(c).startswith('Qt') and 'UMC' in str(c)), None)
+    if _qcol_pre is not None and start_col in bom_data.columns and 'Numero componenti' in bom_data.columns:
+        def _canon_cond(_c):
+            if pd.isna(_c):
+                return ''
+            _s = _re.sub(r'\s+', ' ', str(_c)).strip()
+            if ' OR ' not in _s.upper():
+                _parts = [p.strip() for p in _re.split(r'\bAND\b', _s)]
+                _s = ' AND '.join(sorted(_parts))
+            return _s
+        _orig_cols = list(bom_data.columns)
+        bom_data = bom_data.copy()
+        bom_data['_canon_cond'] = bom_data[start_col].map(_canon_cond)
+        bom_data[_qcol_pre] = pd.to_numeric(bom_data[_qcol_pre], errors='coerce').fillna(0.0)
+        _agg_map = {_qcol_pre: 'sum'}
+        for _c in _orig_cols:
+            if _c not in ('Numero componenti', _qcol_pre):
+                _agg_map[_c] = 'first'
+        bom_data = (bom_data.groupby(['Numero componenti', '_canon_cond'],
+                                     dropna=False, as_index=False)
+                    .agg(_agg_map))
+        bom_data = bom_data[_orig_cols]   # ripristina colonne/ordine originali per il loop
+
     # Parser iniziale (senza filtro) usato per la verifica tracciabilità
     parser = ConditionParser(mapping_df, active_cv_sets)
 
@@ -2885,8 +2914,11 @@ def crea_tutte_righe_univoche_v2(file_path: str,
 
     # Seleziona: Numero componenti + colonne modello + colonne calcolate (usate)
     colonne_da_esplodere = col_modello + col_calcolate_usate
-    colonne_selezionate  = [col_num_componenti] + colonne_da_esplodere
+    _qty_col = 'Qta_comp_UMC' if 'Qta_comp_UMC' in df.columns else None
+    colonne_selezionate  = [col_num_componenti] + colonne_da_esplodere + ([_qty_col] if _qty_col else [])
     df_result = df[colonne_selezionate].copy()
+    if _qty_col:
+        df_result[_qty_col] = pd.to_numeric(df_result[_qty_col], errors='coerce').fillna(0.0)
 
     # -------------------------------------------------------------------------
     # FASE 3.5: Collapse colonne pack color/invariant
@@ -3052,6 +3084,17 @@ def crea_tutte_righe_univoche_v2(file_path: str,
     log.info('  Righe prima  di drop_duplicates: %s', len(df_result))
 
     df_result = df_result.drop_duplicates()
+
+    # Check sicurezza: dopo drop_duplicates non devono restare righe con stesse
+    # caratteristiche ma qty diversa. Se accade, la qty dipende da una dimensione
+    # non nel catalogo (es. mercato/plant non simulato dal MC) -> da decidere a parte.
+    if 'Qta_comp_UMC' in df_result.columns:
+        _ch = [c for c in df_result.columns if c != 'Qta_comp_UMC']
+        _dups = df_result.duplicated(subset=_ch, keep=False)
+        if _dups.any():
+            log.warning("[QTY] %d righe con stesse caratteristiche ma qty diversa "
+                        "(qty dipende da mercato/plant non nel catalogo): verificare",
+                        int(_dups.sum()))
 
     n_univoche = len(df_result)
     n_rimossi  = righe_originali - n_univoche
