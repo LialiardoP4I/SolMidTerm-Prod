@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,7 +49,8 @@ except Exception:
 INPUT_DIR = PKG / "Input"
 OUTPUT_DIR = PKG / "Output"
 RUN_CONFIG_PATH = PKG / "run_config.json"
-POOLED_NAME = "sku_safety_stock_POOLED_rolling_supermodels.xlsx"
+POOLED_NAME = "safety_stock.xlsx"
+HISTORY_DIR = OUTPUT_DIR / "history"
 
 
 # ----------------------------------------------------------------------------
@@ -99,6 +101,51 @@ def _month_order(df):
     return sorted(df["mese_lancio"].dropna().unique().tolist(), key=parse_month_to_sortable)
 
 
+# ---- Storicizzazione run ----------------------------------------------------
+def _save_to_history(pooled_path: Path, meta: dict) -> str:
+    """Copia il pooled in Output/history/<timestamp>/ con meta.json. Ritorna l'id."""
+    ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    dest = HISTORY_DIR / ts
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(pooled_path, dest / "pooled.xlsx")
+    (dest / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return ts
+
+
+def _list_history() -> list:
+    """Lista i run storicizzati (più recente prima): [(id, meta_dict), ...]."""
+    if not HISTORY_DIR.exists():
+        return []
+    runs = []
+    for d in sorted(HISTORY_DIR.iterdir(), reverse=True):
+        if d.is_dir() and (d / "pooled.xlsx").exists():
+            meta = {}
+            try:
+                meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            runs.append((d.name, meta))
+    return runs
+
+
+def _history_label(run_id: str, meta: dict) -> str:
+    sm = ",".join(meta.get("only_supermodels", []) or []) or "?"
+    return (f"{run_id} · n_runs={meta.get('n_runs','?')} p{meta.get('percentile_safety_stock','?')} "
+            f"· [{sm}] · {meta.get('n_righe','?')} righe")
+
+
+@st.cache_data(show_spinner=False)
+def _load_history_pooled(run_id: str):
+    p = HISTORY_DIR / run_id / "pooled.xlsx"
+    return pd.read_excel(p) if p.exists() else None
+
+
+def _delete_history(run_id: str):
+    d = HISTORY_DIR / run_id
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
@@ -115,7 +162,7 @@ with _title_ctx:
     st.caption("Pooling con risk pooling sui componenti condivisi · quantità per-configurazione · "
                "safety stock per mese di lancio (rolling).")
 
-tab_run, tab_res = st.tabs(["▶️  Esegui Analisi", "📊  Risultati"])
+tab_run, tab_res, tab_cmp = st.tabs(["▶️  Esegui Analisi", "📊  Risultati", "🔀  Confronta"])
 
 # ----------------------------------------------------------------------------
 # TAB ESEGUI
@@ -184,8 +231,22 @@ with tab_run:
                     cwd=str(PKG), env=env, capture_output=True, text=True, timeout=7200,
                 )
             if proc.returncode == 0:
-                st.success(f"✅ Completato in {time.time() - t0:.0f}s. "
-                           f"Output: {OUTPUT_DIR / POOLED_NAME}")
+                _elapsed = time.time() - t0
+                _pooled = OUTPUT_DIR / POOLED_NAME
+                # Storicizza il run (copia + meta) per confronto futuro.
+                try:
+                    _n = len(pd.read_excel(_pooled)) if _pooled.exists() else 0
+                    _rid = _save_to_history(_pooled, {
+                        "n_runs": int(n_runs), "percentile_safety_stock": int(percentile),
+                        "affidabilita_model": aff_model, "affidabilita_optional": aff_optional,
+                        "gate_max_mesi": int(gate_max), "only_supermodels": selected,
+                        "durata_s": round(_elapsed, 1), "n_righe": _n,
+                    })
+                    st.success(f"✅ Completato in {_elapsed:.0f}s · storicizzato come «{_rid}». "
+                               f"Output: {_pooled}")
+                except Exception as _he:
+                    st.success(f"✅ Completato in {_elapsed:.0f}s. Output: {_pooled}")
+                    st.warning(f"Storicizzazione non riuscita: {_he}")
                 st.cache_data.clear()
                 with st.expander("Log esecuzione"):
                     st.code((proc.stdout or proc.stderr or "")[-6000:])
@@ -307,3 +368,122 @@ with tab_res:
             st.download_button("⬇️  Scarica pooled (Excel)", fh.read(),
                                file_name=POOLED_NAME,
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ----------------------------------------------------------------------------
+# TAB CONFRONTA
+# ----------------------------------------------------------------------------
+with tab_cmp:
+    runs = _list_history()
+    if len(runs) < 2:
+        st.info(f"Servono almeno 2 run storicizzati per il confronto (disponibili: {len(runs)}). "
+                "Esegui altre analisi nel tab «Esegui».")
+        if runs:
+            st.caption("Run disponibili: " + " · ".join(r for r, _ in runs))
+    else:
+        labels = {f"{_history_label(rid, m)}": rid for rid, m in runs}
+        c1, c2 = st.columns(2)
+        with c1:
+            sel_a = st.selectbox("Run A (riferimento)", list(labels.keys()), index=0)
+        with c2:
+            sel_b = st.selectbox("Run B (confronto)", list(labels.keys()), index=1)
+        rid_a, rid_b = labels[sel_a], labels[sel_b]
+
+        if rid_a == rid_b:
+            st.warning("Seleziona due run diversi.")
+        else:
+            df_a = _load_history_pooled(rid_a)
+            df_b = _load_history_pooled(rid_b)
+            if df_a is None or df_b is None:
+                st.error("Impossibile caricare uno dei due run.")
+            else:
+                col_a, _, _ = _pooled_cols(df_a)
+                col_b, _, _ = _pooled_cols(df_b)
+
+                # --- delta KPI ---
+                tot_a = float(df_a[col_a].sum()) if col_a else 0.0
+                tot_b = float(df_b[col_b].sum()) if col_b else 0.0
+                sav_a = float(df_a["risk_pooling_saving"].clip(lower=0).sum()) if "risk_pooling_saving" in df_a else 0.0
+                sav_b = float(df_b["risk_pooling_saving"].clip(lower=0).sum()) if "risk_pooling_saving" in df_b else 0.0
+                k1, k2, k3 = st.columns(3)
+                k1.metric("SS pooled totale (B)", f"{tot_b:,.0f}", f"{tot_b - tot_a:+,.0f} vs A")
+                k2.metric("Risparmio pooling (B)", f"{sav_b:,.0f}", f"{sav_b - sav_a:+,.0f} vs A")
+                k3.metric("SKU (B)", f"{df_b['SKU'].nunique():,}",
+                          f"{df_b['SKU'].nunique() - df_a['SKU'].nunique():+,} vs A")
+
+                st.divider()
+
+                # --- codici nuovi / non più simulati ---
+                st.markdown("### 🆕 Codici nuovi / non più simulati")
+                set_a = set(df_a["SKU"].astype(str))
+                set_b = set(df_b["SKU"].astype(str))
+                nuovi = sorted(set_b - set_a)        # presenti in B, non in A
+                rimossi = sorted(set_a - set_b)      # presenti in A, non più in B
+                cn1, cn2 = st.columns(2)
+                cn1.metric("Codici nuovi (in B, non in A)", len(nuovi))
+                cn2.metric("Codici non più simulati (in A, non in B)", len(rimossi))
+
+                def _summary(df, codes, col):
+                    sub = df[df["SKU"].astype(str).isin(codes)]
+                    cols = [c for c in ["SKU", "Description"] if c in sub.columns]
+                    g = (sub.groupby(cols, dropna=False)[col].sum()
+                         .reset_index().rename(columns={col: "SS_totale"}))
+                    return g.sort_values("SS_totale", ascending=False)
+
+                e1, e2 = st.columns(2)
+                with e1:
+                    st.caption(f"🆕 Nuovi in B ({len(nuovi)})")
+                    if nuovi:
+                        st.dataframe(_summary(df_b, nuovi, col_b), use_container_width=True, height=240)
+                    else:
+                        st.info("Nessun codice nuovo.")
+                with e2:
+                    st.caption(f"🚫 Non più simulati ({len(rimossi)})")
+                    if rimossi:
+                        st.dataframe(_summary(df_a, rimossi, col_a), use_container_width=True, height=240)
+                    else:
+                        st.info("Nessun codice rimosso.")
+
+                st.divider()
+
+                # --- riepilogo per SKU (somma SS su tutti i mesi) ---
+                st.markdown("### Confronto per componente (somma SS su tutti i mesi)")
+                ga = df_a.groupby("SKU")[col_a].sum().rename("SS_A")
+                gb = df_b.groupby("SKU")[col_b].sum().rename("SS_B")
+                comp = pd.concat([ga, gb], axis=1).fillna(0.0)
+                comp["Delta"] = (comp["SS_B"] - comp["SS_A"]).round(2)
+                comp["Delta_%"] = ((comp["SS_B"] - comp["SS_A"]) /
+                                   comp["SS_A"].replace(0, pd.NA) * 100).round(1)
+                comp = comp.reset_index().sort_values("Delta", key=lambda s: s.abs(), ascending=False)
+                _onlydiff = st.checkbox("Mostra solo componenti con differenze", value=True)
+                comp_view = comp[comp["Delta"].abs() > 1e-9] if _onlydiff else comp
+                st.dataframe(comp_view, use_container_width=True, height=320)
+
+                # grafico top |Delta|
+                topd = comp_view.head(15).set_index("SKU")["Delta"]
+                if len(topd):
+                    st.caption("Top 15 componenti per variazione assoluta di SS (B − A)")
+                    st.bar_chart(topd)
+
+                st.divider()
+
+                # --- confronto per (SKU, mese) ---
+                st.markdown("### Confronto per (componente, mese di lancio)")
+                ma = df_a[["SKU", "mese_lancio", col_a]].rename(columns={col_a: "SS_A"})
+                mb = df_b[["SKU", "mese_lancio", col_b]].rename(columns={col_b: "SS_B"})
+                merged = ma.merge(mb, on=["SKU", "mese_lancio"], how="outer").fillna(0.0)
+                merged["Delta"] = (merged["SS_B"] - merged["SS_A"]).round(2)
+                q = st.text_input("Filtra per SKU", "", key="cmp_q")
+                if q.strip():
+                    merged = merged[merged["SKU"].astype(str).str.contains(q.strip(), case=False)]
+                merged = merged.sort_values("Delta", key=lambda s: s.abs(), ascending=False)
+                st.dataframe(merged, use_container_width=True, height=320)
+
+                st.divider()
+                # --- eliminazione run dallo storico ---
+                with st.expander("🗑️  Gestione storico (elimina run)"):
+                    to_del = st.selectbox("Run da eliminare", list(labels.keys()), key="del_sel")
+                    if st.button("Elimina run selezionato", type="secondary"):
+                        _delete_history(labels[to_del])
+                        st.cache_data.clear()
+                        st.success(f"Eliminato {labels[to_del]}. Ricarica la pagina.")

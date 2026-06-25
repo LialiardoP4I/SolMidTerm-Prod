@@ -442,8 +442,7 @@ def run_multi_supermodel_rolling(input_dir: str, output_dir: str, json_path: str
              len(df_pool_rolling) if df_pool_rolling is not None else 0, elapsed)
 
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(
-        output_dir, 'sku_safety_stock_POOLED_rolling_supermodels.xlsx')
+    out_path = os.path.join(output_dir, 'safety_stock.xlsx')
     matching.save_results_pooled(df_pool_rolling, out_path, percentile=percentile)
 
     return _make_result(
