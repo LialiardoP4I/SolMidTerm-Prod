@@ -1,5 +1,5 @@
 {
-  "n_runs": 10,
+  "n_runs": 100,
   "random_seed": 42,
   "start_month": "MAY 2026",
   "percentile_safety_stock": 99,
