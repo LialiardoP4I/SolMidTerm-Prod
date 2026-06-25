@@ -1901,7 +1901,8 @@ def process_excel_to_matrix_v2(excel_path: str = None,
         ('', '', 'Numero componenti'),
         ('', '', 'Condizione_Originale'),
         ('', '', 'Condizione_Espansa'),
-        (start_col, '', '')
+        (start_col, '', ''),
+        ('', '', 'Qta_comp_UMC'),
     ]
 
     for row in mapping_df.itertuples(index=False):
@@ -1920,7 +1921,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
     # FASE 4: Pre-calcolo indici (O(1) lookup)
     # -------------------------------------------------------------------------
     calc_indices = {}
-    mapping_cols_count = len(col_structure) - len(calculated_cols) - 4
+    mapping_cols_count = len(col_structure) - len(calculated_cols) - 5
 
     for c in calculated_cols:
         calc_name, search_key = c[2], c[3]
@@ -1931,7 +1932,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
             # Costruisce indices nell'ordine di priorità definito nel TR
             # CORREZIONE V2: confronto case-insensitive per gestire divergenze TR/Schema
             for readable_name in priority_orders[calc_name]:
-                for idx in range(4, mapping_cols_count + 4):
+                for idx in range(5, mapping_cols_count + 5):
                     b, d, r = col_structure[idx]
                     r_norm = _remove_parentheses_variant(r)
                     if (r.lower() == readable_name.lower() or
@@ -1959,7 +1960,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
             calc_name_stripped = re.sub(r'\s*\([^)]*\)', '', calc_name).strip().lower()
             not_name_stripped  = re.sub(r'\s*\([^)]*\)', '', not_name).strip().lower()
 
-            for idx in range(4, mapping_cols_count + 4):
+            for idx in range(5, mapping_cols_count + 5):
                 b, d, r = col_structure[idx]
                 b_lower = b.lower()
 
@@ -1980,7 +1981,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
             # Caratteristica senza ordine specifico: cerca per descrizione
             # CORREZIONE V2: confronto case-insensitive su desc
             # L'ordine degli indici rispecchia l'ordine del mapping (identico a V1)
-            for idx in range(4, mapping_cols_count + 4):
+            for idx in range(5, mapping_cols_count + 5):
                 b, d, r = col_structure[idx]
                 if d.lower() == search_key.lower():
                     indices.append(idx)
@@ -2194,12 +2195,21 @@ def process_excel_to_matrix_v2(excel_path: str = None,
         if not numero_componenti:
             numero_componenti = bom_data.loc[bom_index, 'Numero componenti'] if 'Numero componenti' in bom_data.columns else ''
 
+        # Qtà componente (UMC): rilevazione robusta del nome colonna (accento à / encoding)
+        qcol = next((c for c in bom_data.columns if str(c).startswith('Qt') and 'UMC' in str(c)), None)
+        qta_umc = bom_data.loc[bom_index, qcol] if qcol is not None else 0
+        try:
+            qta_umc = float(qta_umc)
+        except (TypeError, ValueError):
+            qta_umc = 0.0
+
         if not condition or pd.isna(condition):
             row = ['' for _ in col_structure]
             row[0] = numero_componenti
             row[1] = condition if condition else ''
             row[2] = condition if condition else ''
             row[3] = condition if condition else ''
+            row[4] = qta_umc
             matrix_rows.append(row)
         else:
             all_expanded_conditions = expand_all_conditions(condition, condition)
@@ -2226,6 +2236,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
                     row[1] = original_cond
                     row[2] = expanded_cond
                     row[3] = expanded_cond
+                    row[4] = qta_umc
 
                     included = _populate_row_from_condition_v2(
                         row, expanded_cond, parser, col_structure,
@@ -2250,6 +2261,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
                         row[1] = original_cond
                         row[2] = expanded_cond
                         row[3] = expanded_cond
+                        row[4] = qta_umc
 
                         included = _populate_row_from_condition_v2(
                             row, expanded_cond, parser, col_structure,
@@ -2287,6 +2299,7 @@ def process_excel_to_matrix_v2(excel_path: str = None,
                     row[1] = original_cond
                     row[2] = expanded_cond
                     row[3] = expanded_cond
+                    row[4] = qta_umc
 
                     included = _populate_row_from_condition_v2(
                         row, expanded_cond, parser, col_structure,
@@ -2680,9 +2693,9 @@ def _rileva_colonne(file_path: str, model_col_names=None, model_prefix: str = 'M
 
     LOGICA DI CLASSIFICAZIONE:
     --------------------------
-    1. Prime 4 colonne -> metadati (escluse)
-    2. Colonne con bundle='' E desc='' E posizione >= 4 -> colonne calcolate (dal TR)
-    3. Colonne rimanenti (posizione >= 4, non calcolate) -> colonne mapping (dal Schema)
+    1. Prime 5 colonne -> metadati (escluse)
+    2. Colonne con bundle='' E desc='' E posizione >= 5 -> colonne calcolate (dal TR)
+    3. Colonne rimanenti (posizione >= 5, non calcolate) -> colonne mapping (dal Schema)
     4. Tra le mapping: quelle il cui nome readable corrisponde a model_col_names
        oppure al prefisso model_prefix -> colonne modello
 
@@ -2705,7 +2718,7 @@ def _rileva_colonne(file_path: str, model_col_names=None, model_prefix: str = 'M
           'col_calcolate':      lista nomi colonne calcolate
           'col_mapping_altre':  lista nomi altre colonne mapping (non modello, non metadati)
     """
-    N_METADATA = 4  # Prime 4 colonne sempre escluse
+    N_METADATA = 5  # Prime 5 colonne sempre escluse
 
     # Leggi le 3 righe header senza applicare nessun header
     df_raw = pd.read_excel(file_path, sheet_name='Matrix', header=None, nrows=3)
